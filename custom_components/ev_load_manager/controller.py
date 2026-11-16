@@ -1,10 +1,15 @@
-"""Home Assistant adapter for the one-step-at-a-time EV load controller."""
+"""Non-blocking, per-phase EV charge regulation for Home Assistant.
+
+Commands are dispatched in waves: one amp per eligible charger, with no wait for
+another charger's acknowledgement. Each pending action is retried independently.
+"""
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import logging
-from datetime import timedelta
 from math import isfinite
+from datetime import timedelta
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
@@ -12,254 +17,437 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from .const import (
     CONF_CONTROL, CONF_CURRENT_PREFIX, CONF_MAX, CONF_MIN, CONF_SETPOINT,
     CONF_START, CONF_STOP, CONF_THRESHOLD_PREFIX, PHASES, SUBENTRY_TYPE_CHARGER,
+    CONF_ACK_TIMEOUT, CONF_ACK_RETRIES, CONF_CONTROL_INTERVAL, CONF_SETTLE_DELAY,
+    DEFAULT_ACK_TIMEOUT, DEFAULT_ACK_RETRIES, DEFAULT_CONTROL_INTERVAL, DEFAULT_SETTLE_DELAY,
 )
-from .planner import Charger, decide
+from .planner import Charger, excesses
 from .sensor import current_in_amp
 
 _LOGGER = logging.getLogger(__name__)
-ACK_TIMEOUT = 12
-POLL_SECONDS = 5
-COOLDOWN_SECONDS = 5
+EPS = 0.05
 
 
-def _number(hass: HomeAssistant, entity_id: str) -> float | None:
+@dataclass
+class Pending:
+    """Action sent to a charger; the entity state is its acknowledgement."""
+    action: str
+    target: float | str
+    sent_at: float
+    attempts: int = 0
+    sending: bool = False
+
+
+def _number(hass: HomeAssistant, entity_id: str | None) -> float | None:
+    if not entity_id:
+        return None
     state = hass.states.get(entity_id)
     if state is None or state.state in ("unknown", "unavailable", ""):
         return None
     try:
-        value = float(state.state)
-        return value if isfinite(value) else None
+        result = float(state.state)
+        return result if isfinite(result) else None
     except (ValueError, TypeError):
         return None
 
 
 class LoadController:
-    """Serialize adjustments and verify that each charger acknowledges them."""
+    """Independent acknowledgements, fast multi-charger shedding and recovery."""
 
     def __init__(self, hass: HomeAssistant, entry) -> None:
         self.hass, self.entry = hass, entry
         self.runtime = entry.runtime_data
         self.lock = asyncio.Lock()
         self.remove_callbacks = []
-        self._last_action = 0.0
-        self._last_problem = None
+        self.pending: dict[str, Pending] = {}
+        self.ready_at: dict[str, float] = {}
+        self._dirty = False
+        self._task: asyncio.Task | None = None
+        self._stopping = False
+        self._last_error: str | None = None
+        self._last_notification: str | None = None
+
+    def _options(self) -> dict:
+        return {**self.entry.data, **self.entry.options}
+
+    def _setting(self, key, default):
+        return self._options().get(key, default)
+
+    def _subs(self):
+        return [s for s in self.entry.subentries.values()
+                if s.subentry_type == SUBENTRY_TYPE_CHARGER]
 
     async def async_start(self) -> None:
-        ids = []
-        d = {**self.entry.data, **self.entry.options}
-        for phase in PHASES:
-            ids.append(d[f"{CONF_CURRENT_PREFIX}{phase}"])
+        data = self._options()
+        entities = [data.get(f"{CONF_CURRENT_PREFIX}{p}") for p in PHASES]
         for sub in self._subs():
-            ids += [sub.data.get(CONF_SETPOINT), sub.data.get(CONF_CONTROL)]
-            ids += [sub.data.get(f"{CONF_CURRENT_PREFIX}{p}") for p in PHASES]
-        ids = list(set(filter(None, ids)))
+            entities.extend((sub.data.get(CONF_SETPOINT), sub.data.get(CONF_CONTROL)))
+            entities.extend(sub.data.get(f"{CONF_CURRENT_PREFIX}{p}") for p in PHASES)
+        ids = list(set(filter(None, entities)))
         if ids:
             self.remove_callbacks.append(
                 async_track_state_change_event(self.hass, ids, self._changed)
             )
         self.remove_callbacks.append(
-            async_track_time_interval(self.hass, self._periodic, timedelta(seconds=POLL_SECONDS))
+            async_track_time_interval(
+                self.hass, self._periodic,
+                timedelta(seconds=float(self._setting(
+                    CONF_CONTROL_INTERVAL, DEFAULT_CONTROL_INTERVAL
+                ))),
+            )
         )
+        self._request_evaluation()
 
     async def async_stop(self) -> None:
+        self._stopping = True
         for remove in self.remove_callbacks:
             remove()
         self.remove_callbacks.clear()
+        if self._task is not None:
+            await self._task
         async with self.lock:
             pass
 
-    def _subs(self):
-        return [sub for sub in self.entry.subentries.values()
-                if sub.subentry_type == SUBENTRY_TYPE_CHARGER]
-
     @callback
     def _changed(self, event) -> None:
-        self.hass.async_create_task(self.async_evaluate())
+        self._request_evaluation()
 
     @callback
     def _periodic(self, now) -> None:
-        self.hass.async_create_task(self.async_evaluate())
+        self._request_evaluation()
+
+    @callback
+    def _request_evaluation(self) -> None:
+        if self._stopping:
+            return
+        self._dirty = True
+        if self._task is None or self._task.done():
+            self._task = self.hass.async_create_task(self.async_evaluate())
+
+    async def _notify_error(self, message: str):
+        _LOGGER.error("EV load management: %s", message)
+        if self._last_notification == message:
+            return
+        self._last_notification = message
+        await self.hass.services.async_call(
+            "persistent_notification", "create",
+            {"title": "EV Load Manager: regulation error",
+             "message": message,
+             "notification_id": f"ev_load_manager_error_{self.entry.entry_id}"},
+            blocking=False,
+        )
+
+    async def _persist(self):
+        await self.runtime.store.async_save({"snapshots": self.runtime.snapshots})
+        self.hass.bus.async_fire(
+            "ev_load_manager_snapshot_updated", {"entry_id": self.entry.entry_id}
+        )
+
+    async def _remember(self, sub, setpoint: float):
+        if sub.subentry_id in self.runtime.snapshots:
+            return
+        state = self.hass.states.get(sub.data[CONF_CONTROL])
+        self.runtime.snapshots[sub.subentry_id] = {
+            "initial_current_a": setpoint,
+            "initial_command": state.state if state else None,
+            "initial_phase_currents_a": {
+                p: current_in_amp(self.hass, sub.data.get(f"{CONF_CURRENT_PREFIX}{p}"))
+                if sub.data.get(f"{CONF_CURRENT_PREFIX}{p}") else 0.0
+                for p in PHASES
+            },
+            "stopped_by_module": False,
+        }
+        await self._persist()
 
     def _state(self):
-        data = {**self.entry.data, **self.entry.options}
+        data = self._options()
         totals = {
             p: current_in_amp(self.hass, data[f"{CONF_CURRENT_PREFIX}{p}"])
             for p in PHASES
         }
         limits = {p: float(data[f"{CONF_THRESHOLD_PREFIX}{p}"]) for p in PHASES}
+        if not all(isfinite(x) and x > 0 for x in limits.values()):
+            raise ValueError("The current limits must be finite and positive")
         chargers = []
         for sub in self._subs():
             d = sub.data
             currents = {}
             for p in PHASES:
-                entity = d.get(f"{CONF_CURRENT_PREFIX}{p}")
-                currents[p] = current_in_amp(self.hass, entity) if entity else 0.0
+                entity_id = d.get(f"{CONF_CURRENT_PREFIX}{p}")
+                currents[p] = current_in_amp(self.hass, entity_id) if entity_id else 0.0
             control = self.hass.states.get(d[CONF_CONTROL])
-            is_active = control is not None and control.state == d[CONF_START]
+            active = control is not None and control.state == d[CONF_START]
+            low, high = float(d[CONF_MIN]), float(d[CONF_MAX])
+            if not 0 <= low <= high or not all(isfinite(x) for x in (low, high)):
+                raise ValueError(f"Invalid current limits for charger {sub.title}")
             snapshot = self.runtime.snapshots.get(sub.subentry_id, {})
             chargers.append(Charger(
                 identifier=sub.subentry_id,
-                currents=currents,
-                setpoint=_number(self.hass, d[CONF_SETPOINT]),
-                minimum=float(d[CONF_MIN]),
-                maximum=float(d[CONF_MAX]),
-                original=snapshot.get("initial_current_a"),
-                active=is_active,
+                currents=currents, setpoint=_number(self.hass, d[CONF_SETPOINT]),
+                minimum=low, maximum=high, original=snapshot.get("initial_current_a"),
+                active=active,
             ))
         return totals, limits, chargers
 
-    async def _persist(self):
-        await self.runtime.store.async_save({"snapshots": self.runtime.snapshots})
-        self.hass.bus.async_fire("ev_load_manager_snapshot_updated",
-                                 {"entry_id": self.entry.entry_id})
-
-    async def _remember(self, sub, current: float) -> None:
-        if sub.subentry_id in self.runtime.snapshots:
-            return
-        control = self.hass.states.get(sub.data[CONF_CONTROL])
-        self.runtime.snapshots[sub.subentry_id] = {
-            "initial_current_a": current,
-            "initial_command": control.state if control else None,
-            "initial_phase_currents_a": {
-                p: (current_in_amp(self.hass, sub.data[f"{CONF_CURRENT_PREFIX}{p}"])
-                    if sub.data.get(f"{CONF_CURRENT_PREFIX}{p}") else 0.0)
-                for p in PHASES
-            },
-            "stopped_by_module": False,
-        }
-        # Persist BEFORE any write to the charger.
-        await self._persist()
-
-    async def _set_current(self, sub, target: float) -> bool:
-        entity_id = sub.data[CONF_SETPOINT]
-        domain = entity_id.split(".", 1)[0]
-        service = "set_value"
-        try:
-            await self.hass.services.async_call(
-                domain, service,
-                {"entity_id": entity_id, "value": target},
-                blocking=True,
-            )
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + ACK_TIMEOUT
-            while loop.time() < deadline:
-                value = _number(self.hass, entity_id)
-                if value is not None and abs(value - target) < 0.1:
-                    return True
-                await asyncio.sleep(0.5)
-        except Exception:
-            _LOGGER.exception("Failed to change current for %s", sub.title)
-        return False
-
-    async def _command(self, sub, command_value: str) -> bool:
+    def _acknowledged(self, sub, pending: Pending) -> bool:
         d = sub.data
-        entity_id = d[CONF_CONTROL]
-        domain = entity_id.split(".", 1)[0]
-        stop_value = command_value
-        if domain == "select":
-            service, data = "select_option", {"option": stop_value}
-        elif domain in ("switch", "input_boolean"):
-            service, data = ("turn_off" if stop_value == "off" else "turn_on"), {}
-        elif domain == "input_select":
-            service, data = "select_option", {"option": stop_value}
-        elif domain in ("number", "input_number"):
-            try:
-                command_number = float(stop_value)
-            except (ValueError, TypeError):
-                _LOGGER.error("Invalid numeric charge command for %s", sub.title)
-                return False
-            service, data = "set_value", {"value": command_number}
-        else:
-            _LOGGER.error("Unsupported charge command domain: %s", domain)
+        if pending.action in ("reduce", "restore", "prepare_restart"):
+            value = _number(self.hass, d[CONF_SETPOINT])
+            return value is not None and abs(value - float(pending.target)) <= 0.1
+        state = self.hass.states.get(d[CONF_CONTROL])
+        if state is None:
             return False
+        domain = d[CONF_CONTROL].split(".", 1)[0]
+        if domain in ("number", "input_number"):
+            try:
+                return abs(float(state.state) - float(pending.target)) <= 0.1
+            except (ValueError, TypeError):
+                return False
+        return state.state == pending.target
+
+    async def _send(self, sub, pending: Pending) -> None:
+        """Send one service call; do not wait for acknowledgement here."""
+        d = sub.data
+        if pending.action in ("reduce", "restore", "prepare_restart"):
+            entity_id = d[CONF_SETPOINT]
+            if entity_id.split(".", 1)[0] not in ("number", "input_number"):
+                raise ValueError(f"Unsupported setpoint entity: {entity_id}")
+            low, high = float(d[CONF_MIN]), float(d[CONF_MAX])
+            if not low - EPS <= float(pending.target) <= high + EPS:
+                raise ValueError(f"Setpoint outside bounds for {sub.title}")
+            service = "set_value"
+            params = {"entity_id": entity_id, "value": pending.target}
+        else:
+            entity_id = d[CONF_CONTROL]
+            domain = entity_id.split(".", 1)[0]
+            if domain in ("select", "input_select"):
+                service = "select_option"
+                params = {"entity_id": entity_id, "option": pending.target}
+            elif domain in ("switch", "input_boolean"):
+                if pending.target not in ("on", "off"):
+                    raise ValueError("Binary control must be on or off")
+                service = "turn_on" if pending.target == "on" else "turn_off"
+                params = {"entity_id": entity_id}
+            elif domain in ("number", "input_number"):
+                service = "set_value"
+                params = {"entity_id": entity_id, "value": float(pending.target)}
+            else:
+                raise ValueError(f"Unsupported command entity: {entity_id}")
+        domain = entity_id.split(".", 1)[0]
+        await self.hass.services.async_call(domain, service, params, blocking=True)
+
+    async def _send_background(self, sub, pending: Pending):
+        pending.sending = True
         try:
-            await self.hass.services.async_call(
-                domain, service, {"entity_id": entity_id, **data}, blocking=True
+            await asyncio.wait_for(
+                self._send(sub, pending),
+                timeout=float(self._setting(CONF_ACK_TIMEOUT, DEFAULT_ACK_TIMEOUT)),
             )
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + ACK_TIMEOUT
-            while loop.time() < deadline:
-                state = self.hass.states.get(entity_id)
-                if state is not None and (
-                    state.state == stop_value
-                    or (domain in ("number", "input_number")
-                        and _number(self.hass, entity_id) is not None
-                        and abs(_number(self.hass, entity_id) - float(stop_value)) < 0.1)
-                ):
-                    return True
-                await asyncio.sleep(0.5)
         except Exception:
-            _LOGGER.exception("Failed to stop charger %s", sub.title)
-        _LOGGER.error("Charger %s did not acknowledge command %s", sub.title, stop_value)
-        return False
+            _LOGGER.exception("Service call failed for %s (%s)", sub.title, pending.action)
+        finally:
+            pending.sending = False
+            self._request_evaluation()
 
-    async def _stop(self, sub) -> bool:
-        success = await self._command(sub, sub.data[CONF_STOP])
-        if success:
-            snap = self.runtime.snapshots.get(sub.subentry_id)
-            if snap is not None:
-                snap["stopped_by_module"] = True
-                await self._persist()
-        return success
+    async def _issue(self, sub, action: str, target: float | str, now: float):
+        if sub.subentry_id in self.pending:
+            return False
+        pending = Pending(action=action, target=target, sent_at=now, attempts=1, sending=True)
+        self.pending[sub.subentry_id] = pending
+        self.hass.async_create_task(self._send_background(sub, pending))
+        return True
 
-    async def async_evaluate(self) -> None:
-        if self.lock.locked():
-            return
-        async with self.lock:
-            loop = asyncio.get_running_loop()
-            if loop.time() - self._last_action < COOLDOWN_SECONDS:
-                return
-            totals, limits, chargers = self._state()
-            decision = decide(totals, limits, chargers)
-            # Restart a charger that WE stopped only if its previous state was
-            # running, the installation has no overload, and starting at its
-            # minimum current cannot exceed the limits on any supply phase.
-            if decision.action == "idle" and all(
-                totals[p] is not None and totals[p] <= limits[p] for p in PHASES
-            ):
-                for sub in self._subs():
-                    snap = self.runtime.snapshots.get(sub.subentry_id, {})
-                    if not snap.get("stopped_by_module"):
-                        continue
-                    if snap.get("initial_command") != sub.data[CONF_START]:
-                        continue
-                    minimum = float(sub.data[CONF_MIN])
-                    previous = snap.get("initial_phase_currents_a") or {}
-                    used_phases = [p for p in PHASES if (previous.get(p) or 0) > 0]
-                    if not used_phases:
-                        used_phases = list(PHASES)
-                    if not all(
-                        limits[p] - totals[p] >= (minimum + 2 if p in used_phases else 0)
-                        for p in PHASES
-                    ):
-                        continue
-                    self._last_action = loop.time()
-                    if await self._command(sub, sub.data[CONF_START]):
+    async def _expire_pending(self, subs: dict, now: float):
+        delay = float(self._setting(CONF_ACK_TIMEOUT, DEFAULT_ACK_TIMEOUT))
+        retries = int(self._setting(CONF_ACK_RETRIES, DEFAULT_ACK_RETRIES))
+        settle = float(self._setting(CONF_SETTLE_DELAY, DEFAULT_SETTLE_DELAY))
+        for sid, pending in list(self.pending.items()):
+            sub = subs.get(sid)
+            if sub is None:
+                self.pending.pop(sid, None)
+                continue
+            if self._acknowledged(sub, pending):
+                self.pending.pop(sid, None)
+                self.ready_at[sid] = now + settle
+                if pending.action == "stop":
+                    snap = self.runtime.snapshots.get(sid)
+                    if snap is not None:
+                        snap["stopped_by_module"] = True
+                        await self._persist()
+                elif pending.action == "start":
+                    snap = self.runtime.snapshots.get(sid)
+                    if snap is not None:
                         snap["stopped_by_module"] = False
                         await self._persist()
-                    return
-            if decision.action == "idle":
+                elif pending.action == "restore":
+                    snap = self.runtime.snapshots.get(sid)
+                    if snap is not None:
+                        ceiling = min(float(snap["initial_current_a"]), float(sub.data[CONF_MAX]))
+                        if float(pending.target) >= ceiling - EPS:
+                            self.runtime.snapshots.pop(sid, None)
+                            await self._persist()
+                continue
+            if pending.sending or now - pending.sent_at < delay:
+                continue
+            if pending.attempts <= retries:
+                pending.attempts += 1
+                pending.sent_at = now
+                pending.sending = True
+                self.hass.async_create_task(self._send_background(sub, pending))
+                continue
+            self.pending.pop(sid, None)
+            if pending.action in ("reduce", "prepare_restart"):
+                _LOGGER.warning("No acknowledgement after %s attempts for %s: requesting stop",
+                                pending.attempts, sub.title)
+                await self._issue(sub, "stop", sub.data[CONF_STOP], now)
+            elif pending.action == "stop":
+                await self._notify_error(
+                    f"Charger {sub.title} did not acknowledge stop. Check the physical installation."
+                )
+            else:
+                await self._notify_error(
+                    f"Charger {sub.title} did not acknowledge {pending.action}."
+                )
+
+    async def _prune_snapshots(self, chargers):
+        changed = False
+        for charger in chargers:
+            sid = charger.identifier
+            snap = self.runtime.snapshots.get(sid)
+            if snap is None or sid in self.pending:
+                continue
+            # A still-active charger drawing no current has completed its
+            # charging session: there is no original charge left to restore.
+            no_draw = all(value is not None and abs(value) <= EPS
+                          for value in charger.currents.values())
+            if (charger.active and no_draw) or (
+                not charger.active and not snap.get("stopped_by_module")
+            ):
+                self.runtime.snapshots.pop(sid, None)
+                changed = True
+            elif (charger.active and charger.setpoint is not None
+                  and not snap.get("stopped_by_module")
+                  and charger.setpoint >= min(float(snap["initial_current_a"]),
+                                               charger.maximum) - EPS):
+                self.runtime.snapshots.pop(sid, None)
+                changed = True
+        if changed:
+            await self._persist()
+
+    async def _run_once(self):
+        now = asyncio.get_running_loop().time()
+        subs = {s.subentry_id: s for s in self._subs()}
+        await self._expire_pending(subs, now)
+        totals, limits, chargers = self._state()
+        await self._prune_snapshots(chargers)
+        over = excesses(totals, limits)
+        if any(v is None for v in over.values()):
+            return
+        hot = {p for p in PHASES if over[p] > EPS}
+        ready = [c for c in chargers
+                 if c.identifier not in self.pending
+                 and now >= self.ready_at.get(c.identifier, 0)]
+        if hot:
+            # Never wait for a slow charger if others can lower the excess.
+            # Every charger is asked to drop at most 1 A during one wave.
+            invalid = [
+                c for c in ready if c.active and (
+                    c.setpoint is None or any(x is None for x in c.currents.values())
+                )
+            ]
+            for c in invalid:
+                sub = subs[c.identifier]
+                if c.setpoint is not None:
+                    await self._remember(sub, c.setpoint)
+                await self._issue(sub, "stop", sub.data[CONF_STOP], now)
+            remaining = {p: float(over[p]) for p in PHASES}
+            ranked = sorted(
+                (c for c in ready if c.active and c not in invalid and
+                 c.largest_draw(hot) > EPS),
+                key=lambda c: (-c.largest_draw(hot), c.identifier),
+            )
+            for c in ranked:
+                if not any(remaining[p] > EPS and p in c.phases() for p in hot):
+                    break
+                sub = subs[c.identifier]
+                if c.setpoint is not None and c.setpoint - c.minimum >= 1 - EPS:
+                    await self._remember(sub, c.setpoint)
+                    await self._issue(sub, "reduce", round(c.setpoint - 1, 3), now)
+                    for p in c.phases():
+                        remaining[p] = max(0.0, remaining[p] - 1.0)
+            # Do not stop a minimum-current charger while another adjustment
+            # is pending; let it change the physical reading first.
+            if not self.pending and any(v > EPS for v in remaining.values()):
+                minimum_only = sorted(
+                    (c for c in ranked if c.setpoint is not None
+                     and c.setpoint - c.minimum < 1 - EPS),
+                    key=lambda c: (-c.largest_draw(hot), c.identifier),
+                )
+                for c in minimum_only:
+                    if not any(remaining[p] > EPS and p in c.phases() for p in hot):
+                        break
+                    sub = subs[c.identifier]
+                    await self._remember(sub, c.setpoint)
+                    await self._issue(sub, "stop", sub.data[CONF_STOP], now)
+                    for p in c.phases():
+                        remaining[p] = max(0, remaining[p] - max(0, c.currents[p] or 0))
+            return
+
+        # Do not increase charge while still awaiting the outcome of shedding.
+        if self.pending:
+            return
+        # Previously stopped chargers have priority over already-running
+        # chargers, so they cannot starve while others are being restored.
+        for c in sorted(ready, key=lambda c: c.identifier):
+            snap = self.runtime.snapshots.get(c.identifier)
+            if not snap or not snap.get("stopped_by_module"):
+                continue
+            if snap.get("initial_command") != subs[c.identifier].data[CONF_START]:
+                continue
+            phase_currents = snap.get("initial_phase_currents_a") or {}
+            used = [p for p in PHASES if (phase_currents.get(p) or 0) > EPS]
+            if not used:
+                used = list(PHASES)
+            required = c.setpoint if c.setpoint is not None else c.minimum
+            required = max(required, c.minimum)
+            if all(limits[p] - totals[p] >= required + 2 for p in used):
+                await self._issue(subs[c.identifier], "start",
+                                  subs[c.identifier].data[CONF_START], now)
                 return
-            sub = next((s for s in self._subs()
-                        if s.subentry_id == decision.charger_id), None)
-            if sub is None:
-                return
-            charger = next(c for c in chargers if c.identifier == sub.subentry_id)
-            self._last_action = loop.time()
-            if charger.setpoint is not None:
-                await self._remember(sub, charger.setpoint)
-            if decision.action == "stop":
-                await self._stop(sub)
-                return
-            if decision.target is None:
-                return
-            ok = await self._set_current(sub, decision.target)
-            if not ok:
-                _LOGGER.warning("Charger %s failed to acknowledge %s A; stopping", sub.title, decision.target)
-                await self._stop(sub)
-                return
-            if decision.action == "restore":
-                snap = self.runtime.snapshots.get(sub.subentry_id)
-                if snap and decision.target >= snap["initial_current_a"] - 0.1:
-                    self.runtime.snapshots.pop(sub.subentry_id, None)
-                    await self._persist()
+
+        margin = {p: limits[p] - totals[p] for p in PHASES}
+        restore = [c for c in ready if c.active and c.original is not None
+                   and c.setpoint is not None and c.phases()
+                   and c.setpoint + 1 <= min(c.original, c.maximum) + EPS
+                   and all(v is not None for v in c.currents.values())]
+        restore.sort(key=lambda c: (
+            sum(c.currents[p] or 0 for p in PHASES),
+            -(c.original - c.setpoint), c.identifier,
+        ))
+        for c in restore:
+            if all(margin[p] >= 2 for p in c.phases()):
+                await self._issue(subs[c.identifier], "restore",
+                                  round(c.setpoint + 1, 3), now)
+                for p in c.phases():
+                    margin[p] -= 1
+
+    async def async_evaluate(self):
+        """Catch errors, notify the user, and re-run for coalesced events."""
+        if self.lock.locked():
+            self._dirty = True
+            return
+        async with self.lock:
+            while self._dirty and not self._stopping:
+                self._dirty = False
+                try:
+                    await self._run_once()
+                    self._last_error = None
+                except Exception as exc:
+                    problem = f"{type(exc).__name__}: {exc}"
+                    _LOGGER.exception("EV Load Manager regulation failed")
+                    if self._last_error != problem:
+                        self._last_error = problem
+                        try:
+                            await self._notify_error(problem)
+                        except Exception:
+                            _LOGGER.exception("Could not create persistent notification")
+                    break
