@@ -15,8 +15,8 @@ from .const import (
     CONF_CHARGER_NAME, CONF_CONTROL, CONF_CURRENT_PREFIX, CONF_MAX,
     CONF_MIN, CONF_SETPOINT, CONF_START, CONF_STOP, CONF_THRESHOLD_PREFIX,
     DOMAIN, PHASES, SUBENTRY_TYPE_CHARGER,
-    CONF_ACK_TIMEOUT, CONF_ACK_RETRIES, CONF_CONTROL_INTERVAL, CONF_SETTLE_DELAY,
-    DEFAULT_ACK_TIMEOUT, DEFAULT_ACK_RETRIES, DEFAULT_CONTROL_INTERVAL,
+    CONF_ACK_TIMEOUT, CONF_CONTROL_INTERVAL, CONF_SETTLE_DELAY,
+    DEFAULT_ACK_TIMEOUT, DEFAULT_CONTROL_INTERVAL,
     DEFAULT_SETTLE_DELAY,
 )
 
@@ -46,7 +46,6 @@ def _threshold_selector():
 def _default_tuning() -> dict:
     return {
         CONF_ACK_TIMEOUT: DEFAULT_ACK_TIMEOUT,
-        CONF_ACK_RETRIES: DEFAULT_ACK_RETRIES,
         CONF_CONTROL_INTERVAL: DEFAULT_CONTROL_INTERVAL,
         CONF_SETTLE_DELAY: DEFAULT_SETTLE_DELAY,
     }
@@ -57,8 +56,6 @@ def _tuning_fields(defaults: dict[str, Any]) -> dict:
     return {
         vol.Required(CONF_ACK_TIMEOUT, default=defaults.get(CONF_ACK_TIMEOUT, DEFAULT_ACK_TIMEOUT)):
             vol.All(vol.Coerce(float), vol.Range(min=1.0, max=120.0)),
-        vol.Required(CONF_ACK_RETRIES, default=defaults.get(CONF_ACK_RETRIES, DEFAULT_ACK_RETRIES)):
-            vol.All(vol.Coerce(int), vol.Range(min=0, max=10)),
         vol.Required(CONF_CONTROL_INTERVAL, default=defaults.get(CONF_CONTROL_INTERVAL, DEFAULT_CONTROL_INTERVAL)):
             vol.All(vol.Coerce(float), vol.Range(min=0.2, max=30.0)),
         vol.Required(CONF_SETTLE_DELAY, default=defaults.get(CONF_SETTLE_DELAY, DEFAULT_SETTLE_DELAY)):
