@@ -11,7 +11,7 @@
           "max_l2": "Maximum L2 (A)",
           "current_l3": "Total current L3",
           "max_l3": "Maximum L3 (A)",
-          "ack_timeout": "Acknowledgement timeout per attempt (seconds)",
+          "ack_timeout": "Maximum time without physical current progress (seconds)",
           "control_interval": "Control interval (seconds)",
           "settle_delay": "Post-acknowledgement settling delay (seconds)"
         }
@@ -33,7 +33,7 @@
           "max_l2": "Maximum L2 (A)",
           "current_l3": "Total current L3",
           "max_l3": "Maximum L3 (A)",
-          "ack_timeout": "Acknowledgement timeout per attempt (seconds)",
+          "ack_timeout": "Maximum time without physical current progress (seconds)",
           "control_interval": "Control interval (seconds)",
           "settle_delay": "Post-acknowledgement settling delay (seconds)"
         }
