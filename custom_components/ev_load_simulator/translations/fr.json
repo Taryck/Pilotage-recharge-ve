@@ -1,0 +1,35 @@
+{
+  "title": "Simulateur parking VE",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurer le parking virtuel",
+        "data": {
+          "count": "Nombre de bornes",
+          "factor": "Multiplicateur temps pour l'énergie",
+          "trip_seconds": "Durée maximale du dépassement (s)",
+          "threshold_l1": "Seuil de coupure simulée L1 (A)",
+          "threshold_l2": "Seuil de coupure simulée L2 (A)",
+          "threshold_l3": "Seuil de coupure simulée L3 (A)",
+          "seed": "Graine aléatoire"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Modifier les paramètres du simulateur",
+        "data": {
+          "count": "Nombre de bornes",
+          "factor": "Multiplicateur temps pour l'énergie",
+          "trip_seconds": "Durée maximale du dépassement (s)",
+          "threshold_l1": "Seuil de coupure simulée L1 (A)",
+          "threshold_l2": "Seuil de coupure simulée L2 (A)",
+          "threshold_l3": "Seuil de coupure simulée L3 (A)",
+          "seed": "Graine aléatoire"
+        }
+      }
+    }
+  }
+}
