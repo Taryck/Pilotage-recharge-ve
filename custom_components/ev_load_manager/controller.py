@@ -358,9 +358,11 @@ class LoadController:
     async def _run_once(self):
         now = asyncio.get_running_loop().time()
         subs = {s.subentry_id: s for s in self._subs()}
-        await self._expire_pending(subs, now)
         totals, limits, chargers = self._state()
+        # Completion (actual current 0 while active) invalidates the old
+        # charging session before a pending timeout can force an extra stop.
         await self._prune_snapshots(chargers)
+        await self._expire_pending(subs, now)
         over = excesses(totals, limits)
         if any(v is None for v in over.values()):
             return
