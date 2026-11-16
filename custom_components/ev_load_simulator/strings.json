@@ -1,0 +1,35 @@
+{
+  "title": "EV Parking Simulator",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure virtual parking",
+        "data": {
+          "count": "Number of chargers",
+          "factor": "Energy calculation time multiplier",
+          "trip_seconds": "Maximum overload duration (s)",
+          "threshold_l1": "Simulated breaker threshold L1 (A)",
+          "threshold_l2": "Simulated breaker threshold L2 (A)",
+          "threshold_l3": "Simulated breaker threshold L3 (A)",
+          "seed": "Random seed"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Edit simulator parameters",
+        "data": {
+          "count": "Number of chargers",
+          "factor": "Energy calculation time multiplier",
+          "trip_seconds": "Maximum overload duration (s)",
+          "threshold_l1": "Simulated breaker threshold L1 (A)",
+          "threshold_l2": "Simulated breaker threshold L2 (A)",
+          "threshold_l3": "Simulated breaker threshold L3 (A)",
+          "seed": "Random seed"
+        }
+      }
+    }
+  }
+}
