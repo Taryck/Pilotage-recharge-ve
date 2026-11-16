@@ -146,6 +146,10 @@ class EvLoadManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             for key in (f"{CONF_CURRENT_PREFIX}{phase}",
                         f"{CONF_THRESHOLD_PREFIX}{phase}")
         }
+        for phase in PHASES:
+            limit = float(config[f"{CONF_THRESHOLD_PREFIX}{phase}"])
+            if not 0.1 <= limit <= 10000:
+                return self.async_abort(reason="invalid_import")
         # Marker used to identify test configurations. Keep this in the entry
         # so that a later import can NEVER overwrite a real installation.
         config["simulator_entry_id"] = simulator_id
@@ -203,7 +207,7 @@ class EvLoadManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Keep previous subentries not in this simulation batch; no automatic
         # deletion of charger configuration is performed.
         self.hass.config_entries.async_update_entry(
-            existing_entry, data=config, options={}, subentries=updated,
+            existing_entry, data=config, subentries=updated,
         )
         return self.async_abort(reason="already_configured")
 
