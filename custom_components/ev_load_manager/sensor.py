@@ -10,6 +10,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .const import (
     CONF_CHARGER_NAME, CONF_CURRENT_PREFIX, CONF_MAX, CONF_MIN,
     CONF_SETPOINT, CONF_CONTROL, CONF_START, CONF_STOP, PHASES,
+    CONF_THRESHOLD_PREFIX,
     SUBENTRY_TYPE_CHARGER,
 )
 
@@ -36,7 +37,7 @@ def current_in_amp(hass: HomeAssistant, entity_id: str | None) -> float | None:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    entities = []
+    entities = [InstallationStatus(hass, entry)]
     for sub in entry.subentries.values():
         if sub.subentry_type == SUBENTRY_TYPE_CHARGER:
             entities.extend((ChargerStatus(hass, entry, sub), ChargerSavedCurrent(entry, sub), ChargerSavedRunState(entry, sub)))
@@ -128,6 +129,8 @@ class ChargerStatus(ChargerBase):
             "start_value": d[CONF_START], "stop_value": d[CONF_STOP],
             "saved_initial_current_a": self.snapshot.get("initial_current_a"),
             "saved_initial_command": self.snapshot.get("initial_command"),
+            "saved_initial_phase_currents_a": self.snapshot.get("initial_phase_currents_a"),
+            "stopped_by_module": self.snapshot.get("stopped_by_module", False),
         }
         for p in PHASES:
             ent = d.get(f"{CONF_CURRENT_PREFIX}{p}")
@@ -135,3 +138,55 @@ class ChargerStatus(ChargerBase):
             attributes[f"{p}_current_a"] = current_in_amp(self.hass, ent) if ent else 0.0
             attributes[f"{p}_valid"] = current_in_amp(self.hass, ent) is not None if ent else True
         return attributes
+
+
+class InstallationStatus(SensorEntity):
+    """Global supply currents and per-phase excess, visible in Home Assistant."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_icon = "mdi:transmission-tower"
+
+    def __init__(self, hass, entry):
+        self.hass = hass
+        self.entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_installation_status"
+        self._attr_name = "Pilotage recharge VE — Installation"
+
+    async def async_added_to_hass(self):
+        d = {**self.entry.data, **self.entry.options}
+        ids = [d.get(f"{CONF_CURRENT_PREFIX}{p}") for p in PHASES]
+        self.async_on_remove(async_track_state_change_event(
+            self.hass, list(filter(None, ids)), self._changed
+        ))
+
+    @callback
+    def _changed(self, event):
+        self.async_write_ha_state()
+
+    def _values(self):
+        d = {**self.entry.data, **self.entry.options}
+        currents = {p: current_in_amp(self.hass, d.get(f"{CONF_CURRENT_PREFIX}{p}"))
+                    for p in PHASES}
+        limits = {p: float(d[f"{CONF_THRESHOLD_PREFIX}{p}"]) for p in PHASES}
+        return currents, limits
+
+    @property
+    def native_value(self):
+        currents, limits = self._values()
+        if any(v is None for v in currents.values()):
+            return "indisponible"
+        return "dépassement" if any(currents[p] > limits[p] for p in PHASES) else "normal"
+
+    @property
+    def extra_state_attributes(self):
+        currents, limits = self._values()
+        result = {}
+        for p in PHASES:
+            result[f"{p}_current_a"] = currents[p]
+            result[f"{p}_threshold_a"] = limits[p]
+            result[f"{p}_excess_a"] = (
+                round(max(0.0, currents[p] - limits[p]), 3)
+                if currents[p] is not None else None
+            )
+        return result
