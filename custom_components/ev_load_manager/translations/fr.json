@@ -12,7 +12,6 @@
           "current_l3": "Courant total L3",
           "max_l3": "Seuil maximal L3 (A)",
           "ack_timeout": "Délai d'acquittement par tentative (secondes)",
-          "ack_retries": "Nombre de nouvelles tentatives avant arrêt",
           "control_interval": "Intervalle de contrôle (secondes)",
           "settle_delay": "Attente après acquittement avant nouvelle action (secondes)"
         }
@@ -35,7 +34,6 @@
           "current_l3": "Courant total L3",
           "max_l3": "Seuil maximal L3 (A)",
           "ack_timeout": "Délai d'acquittement par tentative (secondes)",
-          "ack_retries": "Nombre de nouvelles tentatives avant arrêt",
           "control_interval": "Intervalle de contrôle (secondes)",
           "settle_delay": "Attente après acquittement avant nouvelle action (secondes)"
         }
