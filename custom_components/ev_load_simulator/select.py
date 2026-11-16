@@ -34,7 +34,7 @@ class SimSelect(SimEntity, SelectEntity):
         elif self.key == "command":
             if option == "Charge en cours":
                 if self.charger.status == "stopped" and not self.runtime.parking.tripped:
-                    self.charger.start()
+                    self.charger.resume()
             elif option == "Charge Terminée":
                 if not self.charger.ignore_commands:
                     self.charger.stop()
