@@ -86,7 +86,7 @@ class FakeFlow:
     async def async_set_unique_id(self, unique_id):
         self.unique_id = unique_id
 
-    def update_entry(self, entry, *, data, subentries):
+    def update_entry(self, entry, *, data, subentries, options=None):
         self.updates.append((entry, data, subentries))
 
     def async_create_entry(self, **kwargs):
