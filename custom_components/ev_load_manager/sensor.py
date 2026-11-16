@@ -206,7 +206,14 @@ class InstallationStatus(SensorEntity):
     @property
     def extra_state_attributes(self):
         currents, limits = self._values()
-        result = {}
+        controller = getattr(self.entry.runtime_data, "controller", None)
+        result = {
+            "recent_regulation_events": list(controller.audit)[-20:] if controller else [],
+            "pending_commands": {
+                sid: {"action": action.action, "target": action.target}
+                for sid, action in controller.pending.items()
+            } if controller else {},
+        }
         for p in PHASES:
             result[f"{p}_current_a"] = currents[p]
             result[f"{p}_threshold_a"] = limits[p]
