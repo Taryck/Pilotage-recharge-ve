@@ -1,0 +1,139 @@
+# Banc d'essai pour Pilotage-recharge-ve
+# Installer comme package Home Assistant, de preference sur une instance de test.
+# Deux bornes virtuelles : mono L1 et tri L1/L2/L3 (mode mono commutable).
+# Aucune communication Zigbee, MQTT ou borne physique.
+
+input_number:
+  ev_test_maison_l1:
+    name: "EV TEST - Autres usages L1"
+    min: 0
+    max: 80
+    step: 1
+    unit_of_measurement: A
+    mode: box
+    initial: 3
+  ev_test_maison_l2:
+    name: "EV TEST - Autres usages L2"
+    min: 0
+    max: 80
+    step: 1
+    unit_of_measurement: A
+    mode: box
+    initial: 3
+  ev_test_maison_l3:
+    name: "EV TEST - Autres usages L3"
+    min: 0
+    max: 80
+    step: 1
+    unit_of_measurement: A
+    mode: box
+    initial: 3
+  ev_test_mono_consigne:
+    name: "EV TEST - Mono consigne"
+    min: 8
+    max: 32
+    step: 1
+    unit_of_measurement: A
+    mode: box
+    initial: 10
+  ev_test_tri_consigne:
+    name: "EV TEST - Tri consigne"
+    min: 8
+    max: 32
+    step: 1
+    unit_of_measurement: A
+    mode: box
+    initial: 10
+
+input_select:
+  ev_test_mono_commande:
+    name: "EV TEST - Mono commande"
+    options:
+      - "Charge en cours"
+      - "Charge Terminée"
+      - "Pause"
+    initial: "Charge en cours"
+  ev_test_tri_commande:
+    name: "EV TEST - Tri commande"
+    options:
+      - "Charge en cours"
+      - "Charge Terminée"
+      - "Pause"
+    initial: "Charge en cours"
+  ev_test_tri_mode:
+    name: "EV TEST - Tri mode"
+    options:
+      - "Triphasé"
+      - "Monophasé L1"
+    initial: "Triphasé"
+
+template:
+  - sensor:
+      - name: "EV TEST Mono L1"
+        unique_id: ev_test_mono_l1
+        unit_of_measurement: A
+        device_class: current
+        state: >-
+          {{ states('input_number.ev_test_mono_consigne') | float(0)
+             if is_state('input_select.ev_test_mono_commande', 'Charge en cours')
+             else 0 }}
+      - name: "EV TEST Mono L2"
+        unique_id: ev_test_mono_l2
+        unit_of_measurement: A
+        device_class: current
+        state: "0"
+      - name: "EV TEST Mono L3"
+        unique_id: ev_test_mono_l3
+        unit_of_measurement: A
+        device_class: current
+        state: "0"
+      - name: "EV TEST Tri L1"
+        unique_id: ev_test_tri_l1
+        unit_of_measurement: A
+        device_class: current
+        state: >-
+          {{ states('input_number.ev_test_tri_consigne') | float(0)
+             if is_state('input_select.ev_test_tri_commande', 'Charge en cours')
+             else 0 }}
+      - name: "EV TEST Tri L2"
+        unique_id: ev_test_tri_l2
+        unit_of_measurement: A
+        device_class: current
+        state: >-
+          {{ states('input_number.ev_test_tri_consigne') | float(0)
+             if is_state('input_select.ev_test_tri_commande', 'Charge en cours')
+             and is_state('input_select.ev_test_tri_mode', 'Triphasé')
+             else 0 }}
+      - name: "EV TEST Tri L3"
+        unique_id: ev_test_tri_l3
+        unit_of_measurement: A
+        device_class: current
+        state: >-
+          {{ states('input_number.ev_test_tri_consigne') | float(0)
+             if is_state('input_select.ev_test_tri_commande', 'Charge en cours')
+             and is_state('input_select.ev_test_tri_mode', 'Triphasé')
+             else 0 }}
+      - name: "EV TEST Installation L1"
+        unique_id: ev_test_installation_l1
+        unit_of_measurement: A
+        device_class: current
+        state: >-
+          {{ (states('input_number.ev_test_maison_l1') | float(0)
+            + states('sensor.ev_test_mono_l1') | float(0)
+            + states('sensor.ev_test_tri_l1') | float(0)) | round(2) }}
+      - name: "EV TEST Installation L2"
+        unique_id: ev_test_installation_l2
+        unit_of_measurement: A
+        device_class: current
+        state: >-
+          {{ (states('input_number.ev_test_maison_l2') | float(0)
+            + states('sensor.ev_test_mono_l2') | float(0)
+            + states('sensor.ev_test_tri_l2') | float(0)) | round(2) }}
+      - name: "EV TEST Installation L3"
+        unique_id: ev_test_installation_l3
+        unit_of_measurement: A
+        device_class: current
+        state: >-
+          {{ (states('input_number.ev_test_maison_l3') | float(0)
+            + states('sensor.ev_test_mono_l3') | float(0)
+            + states('sensor.ev_test_tri_l3') | float(0)) | round(2) }}
