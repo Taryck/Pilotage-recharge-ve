@@ -39,6 +39,8 @@ class Pending:
     sending: bool = False
     source_setpoint: float | None = None
     measured_at_send: dict[str, float | None] | None = None
+    best_measured: dict[str, float | None] | None = None
+    last_progress_at: float | None = None
 
 
 def _number(hass: HomeAssistant, entity_id: str | None) -> float | None:
@@ -320,7 +322,9 @@ class LoadController:
         } if action == "reduce" else None)
         pending = Pending(action=action, target=target, sent_at=now, attempts=1,
                           sending=True, source_setpoint=source,
-                          measured_at_send=before)
+                          measured_at_send=before,
+                          best_measured=dict(before) if before else None,
+                          last_progress_at=now)
         self.pending[sub.subentry_id] = pending
         self._record("command", charger=sub.title, action=action, target=target)
         if action == "start":
@@ -330,6 +334,30 @@ class LoadController:
             self.startup_grace_until[sub.subentry_id] = now + max(3.0, settle + 2.0)
         self._schedule_command(sub, pending)
         return True
+
+    def _physical_progress(self, sub, pending: Pending, now: float) -> None:
+        """A large reduction needs time; retain it while real current falls.
+
+        A change of at least 0.5 A beats the 0.2 A random noise expected on
+        each phase in the test simulator. This refreshes the inactivity timer,
+        not the absolute deadline; the full commanded reduction must still
+        be measured before the action is acknowledged.
+        """
+        if pending.action != "reduce" or not pending.best_measured:
+            return
+        advanced = False
+        for phase, previous in pending.best_measured.items():
+            if previous is None or previous <= EPS:
+                continue
+            entity = sub.data.get(f"{CONF_CURRENT_PREFIX}{phase}")
+            current = current_in_amp(self.hass, entity)
+            if current is not None and previous - current >= 0.5:
+                pending.best_measured[phase] = current
+                advanced = True
+        if advanced:
+            pending.last_progress_at = now
+            self._record("physical_progress", charger=sub.title,
+                         currents=pending.best_measured)
 
     async def _expire_pending(self, subs: dict, now: float):
         delay = float(self._setting(CONF_ACK_TIMEOUT, DEFAULT_ACK_TIMEOUT))
@@ -365,7 +393,11 @@ class LoadController:
                             self.runtime.snapshots.pop(sid, None)
                             await self._persist()
                 continue
-            if pending.sending or now - pending.sent_at < delay:
+            self._physical_progress(sub, pending, now)
+            if pending.sending or now - (
+                pending.last_progress_at if pending.last_progress_at is not None
+                else pending.sent_at
+            ) < delay:
                 continue
             self.pending.pop(sid, None)
             self._record("ack_timeout", charger=sub.title,
