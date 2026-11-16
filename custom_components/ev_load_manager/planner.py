@@ -79,13 +79,13 @@ def decide(totals: Mapping[str, float | None],
             return Decision("stop", unmeasurable[0].identifier,
                             reason="Charger measurement or setpoint unavailable")
         possible = [c for c in chargers if c.active and c.setpoint is not None
-                    and c.setpoint > c.minimum + EPS
+                    and c.setpoint - c.minimum >= 1 - EPS
                     and c.largest_draw(hot) > EPS]
         possible.sort(key=lambda c: (-c.largest_draw(hot), c.identifier))
         if possible:
             c = possible[0]
             return Decision("reduce", c.identifier,
-                            max(c.minimum, round(c.setpoint - 1, 3)),
+                            round(c.setpoint - 1, 3),
                             "Exceeded " + ", ".join(sorted(hot)))
         # Current below minimum cannot be used as a control setting.
         # Stop a still-drawing charger only after all reducible candidates
