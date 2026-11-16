@@ -43,15 +43,27 @@ Exécuter `python -m pip install pytest` puis `python -m pytest -q tests`. GitHu
 
 La configuration a été validée par l'utilisateur dans Home Assistant. Le nouveau pilotage nécessite encore une validation pratique sur une instance de test.
 
-## Simulateur indépendant de parking VE
+## Synchronisation avec Charging Station Simulator (v0.2.1)
 
-Le dépôt contient désormais une **seconde intégration HA** : [`ev_load_simulator`](custom_components/ev_load_simulator/README.md), installable manuellement dans `/homeassistant/custom_components/ev_load_simulator` sur une **instance de test**.
+Le module supporte maintenant **plusieurs installations** configurées indépendamment.
+Une installation de test peut être créée sans remplacer les capteurs physiques de
+l'installation existante.
 
-Elle propose un nombre de bornes configurable (1 à 100), toutes mono/tri configurables, des courants de départ fixes pendant le cycle, des cibles kWh, des commandes de charge, une rampe de réponse aléatoire de 1 à 2 A/s, du bruit indépendant ±0,2 A par phase et une commande d'arrêt à zéro en 2 secondes. Le multiplicateur ×5/×20 n'accélère que le calcul d'énergie.
+Installer d'abord [Charging Station Simulator](https://github.com/Taryck/Charging-Station-Simulator).
+Dans **Paramètres → Appareils et services → Charging Station Simulator → Configurer → Synchroniser avec Pilotage recharge VE** :
+lire l'aperçu des trois compteurs et des bornes à ajouter ou actualiser, puis confirmer.
 
-Les capteurs `Parking Courant total L1/L2/L3` représentent **uniquement la somme des consommations des bornes**, sans autres charges. Seuils du compteur et temporisation avant coupure virtuelle configurables.
+La synchronisation utilise le registre des entités Home Assistant (les IDs renommés
+sont pris en compte), les seuils du simulateur, ses minimums/maximums matériels,
+le réglage `number` et la commande `select` (Charging / Stopped). Une entrée
+distincte de pilotage est créée pour **ce parking simulé uniquement**.
 
-- [Scénarios JSON prédéfinis](custom_components/ev_load_simulator/scenarios.json)
-- [Tests du modèle](tests/test_simulator.py)
+Répéter l'opération n'ajoute pas de doublons. Les bornes qui n'existent plus dans le
+simulateur ne sont pas supprimées automatiquement. Les autres installations,
+notamment physiques, ne sont pas modifiées.
 
-Pour la procédure d'installation et la correspondance des entités avec `ev_load_manager`, lire le [README du simulateur](custom_components/ev_load_simulator/README.md). Le simulateur n'a pas encore été validé en situation réelle dans Home Assistant.
+**Attention :** un test ainsi relié active le régulateur de la nouvelle installation
+simulée. Il peut commander les `number` et `select` virtuels dès l'apparition d'un
+dépassement. Tester sur une instance HA dédiée de préférence.
+
+Tests de l'importation : `tests/test_simulator_import.py`.
