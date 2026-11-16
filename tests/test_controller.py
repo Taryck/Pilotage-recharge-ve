@@ -266,3 +266,51 @@ def test_rejects_setpoint_domain_other_than_number():
         with pytest.raises(ValueError, match="Unsupported setpoint"):
             await controller._send(subs["charger_0"], Pending("reduce", 12, 0))
     asyncio.run(run())
+
+
+def test_finished_active_charge_discards_snapshot_and_pending_action():
+    async def run():
+        controller, hass, subs, store, tasks, Pending = setup(1)
+        controller.runtime.snapshots["charger_0"] = {
+            "initial_current_a": 20, "initial_command": "Charging",
+            "stopped_by_module": False,
+        }
+        controller.pending["charger_0"] = Pending("reduce", 15, -100, attempts=2)
+        hass.states.set("sensor.charger_0_l1", 0)
+        _, _, chargers = controller._state()
+        await controller._prune_snapshots(chargers)
+        assert controller.runtime.snapshots == {}
+        assert controller.pending == {}
+        assert store.saved[-1]["snapshots"] == {}
+    asyncio.run(run())
+
+
+def test_recently_restarted_charger_keeps_snapshot_during_ramp():
+    async def run():
+        controller, hass, subs, store, tasks, _ = setup(1)
+        controller.runtime.snapshots["charger_0"] = {
+            "initial_current_a": 20, "initial_command": "Charging",
+            "stopped_by_module": False,
+        }
+        controller.startup_grace_until["charger_0"] = asyncio.get_running_loop().time() + 10
+        hass.states.set("sensor.charger_0_l1", 0)
+        _, _, chargers = controller._state()
+        await controller._prune_snapshots(chargers)
+        assert "charger_0" in controller.runtime.snapshots
+    asyncio.run(run())
+
+
+def test_restart_waits_until_physical_stop_reaches_zero():
+    async def run():
+        controller, hass, subs, store, tasks, _ = setup(1, limit=50)
+        hass.states.set("sensor.installation_l1", 10)
+        hass.states.set("select.charger_0", "Stopped")
+        hass.states.set("sensor.charger_0_l1", 2)
+        controller.runtime.snapshots["charger_0"] = {
+            "initial_current_a": 16, "initial_command": "Charging",
+            "initial_phase_currents_a": {"l1": 16, "l2": 0, "l3": 0},
+            "stopped_by_module": True,
+        }
+        await controller._run_once()
+        assert "charger_0" not in controller.pending
+    asyncio.run(run())
