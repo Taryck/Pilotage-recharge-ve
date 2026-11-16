@@ -1,0 +1,326 @@
+{
+  "schema_version": 1,
+  "description": "Cas pour simulateur parking VE, uniquement charges des bornes",
+  "cases": [
+    {
+      "id": "mono_phase_l2",
+      "count": 3,
+      "factor": 5,
+      "thresholds": {
+        "l1": 40,
+        "l2": 14,
+        "l3": 40
+      },
+      "trip_seconds": 15,
+      "chargers": [
+        {
+          "index": 1,
+          "mode": "l2",
+          "initial_current": 12,
+          "hardware_min": 8,
+          "target_kwh": 5
+        },
+        {
+          "index": 2,
+          "mode": "tri",
+          "initial_current": 8,
+          "hardware_min": 6,
+          "target_kwh": 6
+        }
+      ],
+      "expect": {
+        "only_charger_currents": true,
+        "overload_phase": "l2",
+        "two_phase_noise_max_a": 0.2
+      }
+    },
+    {
+      "id": "ten_triphase",
+      "count": 10,
+      "factor": 20,
+      "thresholds": {
+        "l1": 70,
+        "l2": 70,
+        "l3": 70
+      },
+      "trip_seconds": 20,
+      "chargers": [
+        {
+          "index": 1,
+          "mode": "tri",
+          "initial_current": 8,
+          "hardware_min": 6,
+          "target_kwh": 10
+        },
+        {
+          "index": 2,
+          "mode": "tri",
+          "initial_current": 10,
+          "hardware_min": 6,
+          "target_kwh": 11
+        },
+        {
+          "index": 3,
+          "mode": "tri",
+          "initial_current": 12,
+          "hardware_min": 6,
+          "target_kwh": 12
+        },
+        {
+          "index": 4,
+          "mode": "tri",
+          "initial_current": 14,
+          "hardware_min": 6,
+          "target_kwh": 13
+        },
+        {
+          "index": 5,
+          "mode": "tri",
+          "initial_current": 16,
+          "hardware_min": 6,
+          "target_kwh": 14
+        },
+        {
+          "index": 6,
+          "mode": "tri",
+          "initial_current": 8,
+          "hardware_min": 6,
+          "target_kwh": 15
+        },
+        {
+          "index": 7,
+          "mode": "tri",
+          "initial_current": 10,
+          "hardware_min": 6,
+          "target_kwh": 16
+        },
+        {
+          "index": 8,
+          "mode": "tri",
+          "initial_current": 12,
+          "hardware_min": 6,
+          "target_kwh": 17
+        },
+        {
+          "index": 9,
+          "mode": "tri",
+          "initial_current": 14,
+          "hardware_min": 6,
+          "target_kwh": 18
+        },
+        {
+          "index": 10,
+          "mode": "tri",
+          "initial_current": 16,
+          "hardware_min": 6,
+          "target_kwh": 19
+        }
+      ],
+      "expect": {
+        "all_phases_overloaded": true
+      }
+    },
+    {
+      "id": "mixed_modes",
+      "count": 10,
+      "factor": 5,
+      "thresholds": {
+        "l1": 30,
+        "l2": 30,
+        "l3": 30
+      },
+      "trip_seconds": 20,
+      "chargers": [
+        {
+          "index": 1,
+          "mode": "l1",
+          "initial_current": 10,
+          "hardware_min": 8,
+          "target_kwh": 5
+        },
+        {
+          "index": 2,
+          "mode": "tri",
+          "initial_current": 10,
+          "hardware_min": 8,
+          "target_kwh": 6
+        },
+        {
+          "index": 3,
+          "mode": "l2",
+          "initial_current": 10,
+          "hardware_min": 8,
+          "target_kwh": 7
+        },
+        {
+          "index": 4,
+          "mode": "l3",
+          "initial_current": 10,
+          "hardware_min": 8,
+          "target_kwh": 8
+        },
+        {
+          "index": 5,
+          "mode": "l1",
+          "initial_current": 10,
+          "hardware_min": 8,
+          "target_kwh": 9
+        },
+        {
+          "index": 6,
+          "mode": "tri",
+          "initial_current": 10,
+          "hardware_min": 8,
+          "target_kwh": 10
+        },
+        {
+          "index": 7,
+          "mode": "l2",
+          "initial_current": 10,
+          "hardware_min": 8,
+          "target_kwh": 11
+        },
+        {
+          "index": 8,
+          "mode": "l3",
+          "initial_current": 10,
+          "hardware_min": 8,
+          "target_kwh": 12
+        },
+        {
+          "index": 9,
+          "mode": "l1",
+          "initial_current": 10,
+          "hardware_min": 8,
+          "target_kwh": 13
+        },
+        {
+          "index": 10,
+          "mode": "tri",
+          "initial_current": 10,
+          "hardware_min": 8,
+          "target_kwh": 14
+        }
+      ],
+      "expect": {
+        "one_phase_operation": true
+      }
+    },
+    {
+      "id": "hardware_min_mismatch",
+      "count": 2,
+      "factor": 5,
+      "thresholds": {
+        "l1": 15,
+        "l2": 15,
+        "l3": 15
+      },
+      "trip_seconds": 20,
+      "chargers": [
+        {
+          "index": 1,
+          "mode": "tri",
+          "initial_current": 16,
+          "hardware_min": 12,
+          "target_kwh": 25
+        }
+      ],
+      "actions": [
+        {
+          "at_s": 3,
+          "charger": 1,
+          "set_current": 11
+        }
+      ],
+      "expect": {
+        "reject_setpoint_below_hardware_min": true
+      }
+    },
+    {
+      "id": "energy_completion",
+      "count": 1,
+      "factor": 20,
+      "thresholds": {
+        "l1": 50,
+        "l2": 50,
+        "l3": 50
+      },
+      "trip_seconds": 30,
+      "chargers": [
+        {
+          "index": 1,
+          "mode": "tri",
+          "initial_current": 16,
+          "hardware_min": 8,
+          "target_kwh": 0.02
+        }
+      ],
+      "expect": {
+        "energy_target_causes_stop": true,
+        "stop_duration_s": 2
+      }
+    },
+    {
+      "id": "breaker_timeout",
+      "count": 3,
+      "factor": 5,
+      "thresholds": {
+        "l1": 5,
+        "l2": 5,
+        "l3": 5
+      },
+      "trip_seconds": 4,
+      "chargers": [
+        {
+          "index": 1,
+          "mode": "tri",
+          "initial_current": 16,
+          "hardware_min": 8,
+          "target_kwh": 25
+        }
+      ],
+      "expect": {
+        "breaker_trips_after_continuous_overload_s": 4
+      }
+    },
+    {
+      "id": "unresponsive",
+      "count": 2,
+      "factor": 5,
+      "thresholds": {
+        "l1": 15,
+        "l2": 15,
+        "l3": 15
+      },
+      "trip_seconds": 30,
+      "chargers": [
+        {
+          "index": 1,
+          "mode": "tri",
+          "initial_current": 16,
+          "hardware_min": 8,
+          "target_kwh": 25,
+          "ignore_commands": true
+        }
+      ],
+      "expect": {
+        "setpoint_unchanged_on_refusal": true
+      }
+    },
+    {
+      "id": "number_of_chargers",
+      "count": 24,
+      "factor": 5,
+      "thresholds": {
+        "l1": 200,
+        "l2": 200,
+        "l3": 200
+      },
+      "trip_seconds": 60,
+      "chargers": [],
+      "expect": {
+        "charger_count": 24
+      }
+    }
+  ]
+}
