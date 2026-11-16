@@ -224,8 +224,12 @@ class LoadController:
                     if snap.get("initial_command") != sub.data[CONF_START]:
                         continue
                     minimum = float(sub.data[CONF_MIN])
+                    previous = snap.get("initial_phase_currents_a") or {}
+                    used_phases = [p for p in PHASES if (previous.get(p) or 0) > 0]
+                    if not used_phases:
+                        used_phases = list(PHASES)
                     if not all(
-                        limits[p] - totals[p] >= minimum + 2
+                        limits[p] - totals[p] >= (minimum + 2 if p in used_phases else 0)
                         for p in PHASES
                     ):
                         continue
