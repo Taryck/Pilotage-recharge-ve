@@ -363,3 +363,50 @@ def test_batch_calculation_is_auditable_and_commands_only_modified_chargers():
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
     asyncio.run(run())
+
+
+def test_physical_response_requires_current_reduction_not_only_setpoint():
+    async def run():
+        controller, hass, subs, store, tasks, Pending = setup(1)
+        sub = subs["charger_0"]
+        p = Pending(
+            "reduce", 10, 1, source_setpoint=16,
+            measured_at_send={"l1": 14, "l2": 0, "l3": 0},
+            best_measured={"l1": 14, "l2": 0, "l3": 0},
+            last_progress_at=1,
+        )
+        hass.states.set("number.charger_0", 10)
+        # Consigne HA changed, but the physical current is still 14 A.
+        assert not controller._acknowledged(sub, p)
+        hass.states.set("sensor.charger_0_l1", 10)
+        assert not controller._acknowledged(sub, p)
+        hass.states.set("sensor.charger_0_l1", 8)
+        assert controller._acknowledged(sub, p)
+    asyncio.run(run())
+
+
+def test_physical_progress_extends_wave_timeout_without_retry():
+    async def run():
+        controller, hass, subs, store, tasks, Pending = setup(1)
+        p = Pending(
+            "reduce", 10, 1,
+            source_setpoint=16,
+            measured_at_send={"l1": 14, "l2": 0, "l3": 0},
+            best_measured={"l1": 14, "l2": 0, "l3": 0},
+            last_progress_at=1,
+        )
+        controller.pending["charger_0"] = p
+        hass.states.set("number.charger_0", 10)
+        hass.states.set("sensor.charger_0_l1", 12)
+        # A physical ramp has begun despite the earlier original deadline.
+        controller._physical_progress(subs["charger_0"], p, 100)
+        assert p.last_progress_at == 100
+        await controller._expire_pending(subs, 101)
+        assert controller.pending["charger_0"].action == "reduce"
+        assert not any(
+            event["event"] == "ack_timeout" for event in controller.audit
+        )
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    asyncio.run(run())
