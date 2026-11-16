@@ -1,5 +1,7 @@
 """Mode, command and fault injection selector entities."""
 from homeassistant.components.select import SelectEntity
+from pathlib import Path
+import json
 from .entity import SimEntity
 
 class SimSelect(SimEntity, SelectEntity):
@@ -10,6 +12,8 @@ class SimSelect(SimEntity, SelectEntity):
 
     @property
     def current_option(self):
+        if self.key == "scenario":
+            return self.runtime.scenario_id
         if self.key == "mode":
             return {"tri": "Triphasé", "l1": "Monophasé L1",
                     "l2": "Monophasé L2", "l3": "Monophasé L3"}[self.charger.mode]
@@ -20,7 +24,9 @@ class SimSelect(SimEntity, SelectEntity):
                 else "Charge Terminée")
 
     async def async_select_option(self, option):
-        if self.key == "mode":
+        if self.key == "scenario":
+            self.runtime.scenario_id = option
+        elif self.key == "mode":
             self.charger.mode = {"Triphasé": "tri", "Monophasé L1": "l1",
                                  "Monophasé L2": "l2", "Monophasé L3": "l3"}[option]
         elif self.key == "fault":
@@ -38,7 +44,9 @@ class SimSelect(SimEntity, SelectEntity):
 
 async def async_setup_entry(hass, entry, async_add_entities):
     runtime = entry.runtime_data
-    result = []
+    cases = json.loads((Path(__file__).parent / "scenarios.json").read_text(encoding="utf-8"))["cases"]
+    result = [SimSelect(runtime, None, "scenario", "Scénario de test",
+                        ["none"] + [case["id"] for case in cases])]
     for charger in runtime.parking.chargers:
         result.extend([
             SimSelect(runtime, charger, "command", "Charging Command",
