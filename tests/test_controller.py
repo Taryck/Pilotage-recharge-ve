@@ -97,7 +97,7 @@ class FakeServices:
 
     async def async_call(self, domain, service, data, *, blocking):
         self.calls.append((domain, service, dict(data)))
-        if domain == "persistent_notification":
+        if domain in ("persistent_notification", "logbook"):
             return
         if data["entity_id"] in self.slow:
             await asyncio.sleep(3600)
@@ -334,6 +334,31 @@ def test_restart_grace_is_installed_before_command_acknowledgement():
         _, _, chargers = controller._state()
         await controller._prune_snapshots(chargers)
         assert "charger_0" in controller.runtime.snapshots
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    asyncio.run(run())
+
+
+def test_batch_calculation_is_auditable_and_commands_only_modified_chargers():
+    async def run():
+        controller, hass, subs, store, tasks, _ = setup(3, limit=20)
+        controller._request_evaluation = lambda: None
+        # One site phase is 28A; three stations 16/12/10A.
+        hass.states.set("sensor.charger_0_l1", 16)
+        hass.states.set("sensor.charger_1_l1", 12)
+        hass.states.set("sensor.charger_2_l1", 10)
+        hass.states.set("number.charger_0", 16)
+        hass.states.set("number.charger_1", 12)
+        hass.states.set("number.charger_2", 10)
+        await controller._run_once()
+        await asyncio.sleep(0)
+        assert [entry["event"] for entry in controller.audit].count("calculation_step") == 8
+        targets = {entry["charger"]: entry["target"] for entry in controller.audit
+                   if entry["event"] == "command" and entry["action"] == "reduce"}
+        assert targets == {"charger_0": 10, "charger_1": 10}
+        assert not any(event["event"] == "command" and event["charger"] == "charger_2"
+                       for event in controller.audit if "charger" in event)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
