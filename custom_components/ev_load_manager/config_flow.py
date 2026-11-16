@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from typing import Any
+from types import MappingProxyType
+from homeassistant.config_entries import ConfigSubentry
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -83,38 +85,93 @@ class EvLoadManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
-            # Internal, explicit simulator handoff. A distinct unique ID prevents
-            # duplicates without reserving the single old "installation" ID.
-            simulator_id = user_input.get("simulator_entry_id")
-            if simulator_id:
-                await self.async_set_unique_id(f"ev_simulator_{simulator_id}")
-                self._abort_if_unique_id_configured()
-                chargers = user_input["simulator_chargers"]
-                config = {
-                    key: value for key, value in user_input.items()
-                    if key not in ("simulator_chargers", "simulator_name")
-                }
-                return self.async_create_entry(
-                    title=f"Gestion recharge VE - Test {user_input.get('simulator_name', '')}",
-                    data=config,
-                    subentries=[
-                        {
-                            "subentry_type": SUBENTRY_TYPE_CHARGER,
-                            "title": charger["name"],
-                            "unique_id": charger["simulator_key"],
-                            "data": {key: value for key, value in charger.items()
-                                     if key != "simulator_key"},
-                        }
-                        for charger in chargers
-                    ],
-                )
-            # Manual installations are now allowed in multiples.
+            # Normal manual configuration has no fixed unique ID: multiple sites
+            # are supported. Simulation imports have their own stable identity.
             return self.async_create_entry(title="Gestion de recharge VE", data=user_input)
         schema = {}
         for phase in PHASES:
             schema[vol.Required(f"{CONF_CURRENT_PREFIX}{phase}")] = _current_selector()
             schema[vol.Required(f"{CONF_THRESHOLD_PREFIX}{phase}", default=30.0)] = _threshold_selector()
         return self.async_show_form(step_id="user", data_schema=vol.Schema(schema))
+
+    async def async_step_import(self, user_input: dict[str, Any]) -> FlowResult:
+        """Explicitly provision or update a simulator-owned installation.
+
+        This step is only invoked by the simulator after the user confirms
+        its own options flow. NEVER modify a manually configured entry.
+        """
+        if (
+            user_input.get("origin") != "charging_station_simulator"
+            or not (simulator_id := user_input.get("simulator_entry_id"))
+            or not isinstance(user_input.get("simulator_chargers"), list)
+        ):
+            return self.async_abort(reason="invalid_import")
+
+        unique_id = f"simulator_{simulator_id}"
+        await self.async_set_unique_id(unique_id)
+        config = {
+            key: user_input[key]
+            for phase in PHASES
+            for key in (f"{CONF_CURRENT_PREFIX}{phase}",
+                        f"{CONF_THRESHOLD_PREFIX}{phase}")
+        }
+        # Marker used to identify test configurations. Keep this in the entry
+        # so that a later import can NEVER overwrite a real installation.
+        config["simulator_entry_id"] = simulator_id
+        name = str(user_input.get("simulator_name", "Simulated parking"))
+        incoming = []
+        seen = set()
+        for charger in user_input["simulator_chargers"]:
+            key = charger.get("simulator_key")
+            if not key or key in seen:
+                return self.async_abort(reason="invalid_import")
+            seen.add(key)
+            data = {k: v for k, v in charger.items() if k != "simulator_key"}
+            if _validate_charger(self.hass, data) is not None:
+                return self.async_abort(reason="invalid_import")
+            incoming.append((key, data))
+
+        existing_entry = self.hass.config_entries.async_entry_for_domain_unique_id(
+            DOMAIN, unique_id
+        )
+        if existing_entry is None:
+            return self.async_create_entry(
+                title=f"Recharge VE - Test {name}", data=config,
+                subentries=[
+                    {
+                        "subentry_type": SUBENTRY_TYPE_CHARGER,
+                        "title": data[CONF_CHARGER_NAME],
+                        "unique_id": key,
+                        "data": data,
+                    }
+                    for key, data in incoming
+                ],
+            )
+
+        # Protection against any accidental match with a manual entry.
+        if existing_entry.data.get("simulator_entry_id") != simulator_id:
+            return self.async_abort(reason="invalid_import")
+        existing = {
+            sub.unique_id: sub for sub in existing_entry.subentries.values()
+            if sub.subentry_type == SUBENTRY_TYPE_CHARGER
+        }
+        updated = dict(existing_entry.subentries)
+        for key, data in incoming:
+            old = existing.get(key)
+            subentry = ConfigSubentry(
+                data=MappingProxyType(data),
+                subentry_type=SUBENTRY_TYPE_CHARGER,
+                title=data[CONF_CHARGER_NAME],
+                unique_id=key,
+                **({"subentry_id": old.subentry_id} if old else {}),
+            )
+            updated[subentry.subentry_id] = subentry
+        # Keep previous subentries not in this simulation batch; no automatic
+        # deletion of charger configuration is performed.
+        self.hass.config_entries.async_update_entry(
+            existing_entry, data=config, subentries=updated,
+        )
+        return self.async_abort(reason="already_configured")
 
     @staticmethod
     @callback
