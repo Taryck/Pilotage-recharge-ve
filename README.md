@@ -42,3 +42,16 @@ Exécuter `python -m pip install pytest` puis `python -m pytest -q tests`. GitHu
 ## Validation
 
 La configuration a été validée par l'utilisateur dans Home Assistant. Le nouveau pilotage nécessite encore une validation pratique sur une instance de test.
+
+## Simulateur indépendant de parking VE
+
+Le dépôt contient désormais une **seconde intégration HA** : [`ev_load_simulator`](custom_components/ev_load_simulator/README.md), installable manuellement dans `/homeassistant/custom_components/ev_load_simulator` sur une **instance de test**.
+
+Elle propose un nombre de bornes configurable (1 à 100), toutes mono/tri configurables, des courants de départ fixes pendant le cycle, des cibles kWh, des commandes de charge, une rampe de réponse aléatoire de 1 à 2 A/s, du bruit indépendant ±0,2 A par phase et une commande d'arrêt à zéro en 2 secondes. Le multiplicateur ×5/×20 n'accélère que le calcul d'énergie.
+
+Les capteurs `Parking Courant total L1/L2/L3` représentent **uniquement la somme des consommations des bornes**, sans autres charges. Seuils du compteur et temporisation avant coupure virtuelle configurables.
+
+- [Scénarios JSON prédéfinis](custom_components/ev_load_simulator/scenarios.json)
+- [Tests du modèle](tests/test_simulator.py)
+
+Pour la procédure d'installation et la correspondance des entités avec `ev_load_manager`, lire le [README du simulateur](custom_components/ev_load_simulator/README.md). Le simulateur n'a pas encore été validé en situation réelle dans Home Assistant.
