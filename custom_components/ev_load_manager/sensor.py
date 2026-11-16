@@ -5,13 +5,14 @@ from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
     CONF_CHARGER_NAME, CONF_CURRENT_PREFIX, CONF_MAX, CONF_MIN,
     CONF_SETPOINT, CONF_CONTROL, CONF_START, CONF_STOP, PHASES,
     CONF_THRESHOLD_PREFIX,
-    SUBENTRY_TYPE_CHARGER,
+    SUBENTRY_TYPE_CHARGER, DOMAIN,
 )
 
 UNITS = {"A": 1.0, "mA": 0.001, "kA": 1000.0}
@@ -69,6 +70,15 @@ class ChargerBase(SensorEntity):
     def _snapshot_updated(self, event):
         if event.data.get("entry_id") == self.entry.entry_id:
             self.async_write_ha_state()
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self.entry.entry_id}_{self.sub.subentry_id}")},
+            name=self.sub.title,
+            manufacturer="EV Load Manager",
+            via_device=(DOMAIN, self.entry.entry_id),
+        )
 
     @property
     def snapshot(self):
@@ -170,6 +180,14 @@ class InstallationStatus(SensorEntity):
     @callback
     def _changed(self, event):
         self.async_write_ha_state()
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.entry.entry_id)},
+            name=self.entry.title,
+            manufacturer="EV Load Manager",
+        )
 
     def _values(self):
         d = {**self.entry.data, **self.entry.options}
