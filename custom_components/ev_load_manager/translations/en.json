@@ -1,0 +1,77 @@
+{
+  "title": "EV Load Manager",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Electrical installation",
+        "data": {
+          "current_l1": "Total current L1",
+          "max_l1": "Maximum L1 (A)",
+          "current_l2": "Total current L2",
+          "max_l2": "Maximum L2 (A)",
+          "current_l3": "Total current L3",
+          "max_l3": "Maximum L3 (A)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Edit phases and limits",
+        "data": {
+          "current_l1": "Total current L1",
+          "max_l1": "Maximum L1 (A)",
+          "current_l2": "Total current L2",
+          "max_l2": "Maximum L2 (A)",
+          "current_l3": "Total current L3",
+          "max_l3": "Maximum L3 (A)"
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "charger": {
+      "title": "EV charger",
+      "step": {
+        "user": {
+          "title": "Add a charger",
+          "data": {
+            "name": "Charger name",
+            "current_l1": "Charger current L1",
+            "current_l2": "Charger current L2",
+            "current_l3": "Charger current L3",
+            "setpoint": "Charging current setting entity",
+            "control_entity": "Charge command entity",
+            "start_value": "Start value",
+            "stop_value": "Stop value",
+            "min_current": "Minimum current (A)",
+            "max_current": "Maximum current (A)"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit charger",
+          "data": {
+            "name": "Charger name",
+            "current_l1": "Charger current L1",
+            "current_l2": "Charger current L2",
+            "current_l3": "Charger current L3",
+            "setpoint": "Charging current setting entity",
+            "control_entity": "Charge command entity",
+            "start_value": "Start value",
+            "stop_value": "Stop value",
+            "min_current": "Minimum current (A)",
+            "max_current": "Maximum current (A)"
+          }
+        }
+      },
+      "error": {
+        "invalid_limits": "Minimum exceeds maximum",
+        "missing_command_value": "Command values are required",
+        "same_command_values": "Start and stop must differ",
+        "invalid_select_option": "Value not in select options",
+        "invalid_boolean_values": "For switch or input_boolean, use on and off"
+      }
+    }
+  }
+}
