@@ -140,16 +140,23 @@ class EvLoadManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         unique_id = f"simulator_{simulator_id}"
         await self.async_set_unique_id(unique_id)
-        config = {
-            key: user_input[key]
-            for phase in PHASES
-            for key in (f"{CONF_CURRENT_PREFIX}{phase}",
-                        f"{CONF_THRESHOLD_PREFIX}{phase}")
-        }
-        for phase in PHASES:
-            limit = float(config[f"{CONF_THRESHOLD_PREFIX}{phase}"])
-            if not 0.1 <= limit <= 10000:
+        try:
+            config = {
+                key: user_input[key]
+                for phase in PHASES
+                for key in (f"{CONF_CURRENT_PREFIX}{phase}",
+                            f"{CONF_THRESHOLD_PREFIX}{phase}")
+            }
+        except KeyError:
+            return self.async_abort(reason="invalid_import")
+        try:
+            if any(
+                not 0.1 <= float(config[f"{CONF_THRESHOLD_PREFIX}{phase}"]) <= 10000
+                for phase in PHASES
+            ):
                 return self.async_abort(reason="invalid_import")
+        except (ValueError, TypeError, KeyError):
+            return self.async_abort(reason="invalid_import")
         # Marker used to identify test configurations. Keep this in the entry
         # so that a later import can NEVER overwrite a real installation.
         config["simulator_entry_id"] = simulator_id
@@ -158,12 +165,19 @@ class EvLoadManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         incoming = []
         seen = set()
         for charger in user_input["simulator_chargers"]:
+            if not isinstance(charger, dict):
+                return self.async_abort(reason="invalid_import")
             key = charger.get("simulator_key")
-            if not key or key in seen:
+            if not isinstance(key, str) or not key.startswith(
+                f"charging_station_simulator:{simulator_id}:"
+            ) or key in seen:
                 return self.async_abort(reason="invalid_import")
             seen.add(key)
             data = {k: v for k, v in charger.items() if k != "simulator_key"}
-            if _validate_charger(self.hass, data) is not None:
+            try:
+                if _validate_charger(self.hass, data) is not None:
+                    return self.async_abort(reason="invalid_import")
+            except (KeyError, ValueError, TypeError):
                 return self.async_abort(reason="invalid_import")
             incoming.append((key, data))
 
