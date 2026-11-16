@@ -1,0 +1,11 @@
+{
+  "domain": "ev_load_simulator",
+  "name": "Simulateur parking VE",
+  "version": "0.1.0",
+  "documentation": "https://github.com/Taryck/Pilotage-recharge-ve",
+  "config_flow": true,
+  "iot_class": "calculated",
+  "integration_type": "hub",
+  "requirements": [],
+  "codeowners": []
+}
