@@ -1,7 +1,7 @@
-"""Read-only status sensors; no charging commands are sent in version 0.1."""
+"""Read-only regulation telemetry with stable translatable state values."""
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -55,7 +55,9 @@ class ChargerBase(SensorEntity):
         self.entry = entry
         self.sub = sub
         self._attr_unique_id = f"{entry.entry_id}_{sub.subentry_id}_{self.kind}"
-        self._attr_name = f"{sub.title} {self.label}"
+        self._attr_name = None
+        self._attr_translation_key = self.kind
+        self._attr_translation_placeholders = {"charger": sub.title}
 
     async def async_added_to_hass(self):
         """Update saved-state sensors whenever a snapshot is persisted."""
@@ -97,6 +99,8 @@ class ChargerSavedRunState(ChargerBase):
 class ChargerStatus(ChargerBase):
     kind = "status"
     label = "État de recharge"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["monitoring"]
     _attr_icon = "mdi:ev-station"
 
     def __init__(self, hass, entry, sub):
@@ -117,7 +121,7 @@ class ChargerStatus(ChargerBase):
 
     @property
     def native_value(self):
-        return "surveillance"
+        return "monitoring"
 
     @property
     def extra_state_attributes(self):
@@ -146,12 +150,15 @@ class InstallationStatus(SensorEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_icon = "mdi:transmission-tower"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["normal", "overload", "unavailable"]
 
     def __init__(self, hass, entry):
         self.hass = hass
         self.entry = entry
         self._attr_unique_id = f"{entry.entry_id}_installation_status"
-        self._attr_name = "Pilotage recharge VE — Installation"
+        self._attr_name = None
+        self._attr_translation_key = "installation_status"
 
     async def async_added_to_hass(self):
         d = {**self.entry.data, **self.entry.options}
@@ -175,8 +182,8 @@ class InstallationStatus(SensorEntity):
     def native_value(self):
         currents, limits = self._values()
         if any(v is None for v in currents.values()):
-            return "indisponible"
-        return "dépassement" if any(currents[p] > limits[p] for p in PHASES) else "normal"
+            return "unavailable"
+        return "overload" if any(currents[p] > limits[p] for p in PHASES) else "normal"
 
     @property
     def extra_state_attributes(self):
