@@ -157,3 +157,28 @@ def test_scenario_catalog_and_configuration_cases():
             c.initial_current = cfg["initial_current"]
             c.target_kwh = cfg["target_kwh"]
             assert c.start()
+
+
+def test_resume_after_load_shedding_keeps_delivered_energy():
+    parking = Parking(count=1, thresholds=dict.fromkeys(mod.PHASES, 100))
+    charger = parking.chargers[0]
+    charger.target_kwh = 50
+    charger.start()
+    for _ in range(10):
+        parking.tick(1)
+    previous_kwh = charger.delivered_kwh
+    previous_initial = charger.initial_for_session
+    charger.stop()
+    parking.tick(2)
+    assert charger.status == "stopped"
+    assert charger.resume()
+    assert charger.delivered_kwh == previous_kwh
+    assert charger.initial_for_session == previous_initial
+
+
+def test_ignore_commands_exposes_absent_acknowledgement():
+    charger = Charger(1, initial_current=16)
+    charger.start()
+    charger.ignore_commands = True
+    assert not charger.command(15)
+    assert charger.commanded_current == 16
