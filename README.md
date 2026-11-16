@@ -2,7 +2,7 @@
 
 Intégration personnalisée Home Assistant disponible via HACS.
 
-**v0.1.0 : configuration et lecture uniquement. Aucune consigne de recharge n'est envoyée.**
+**v0.2.0 : pilotage automatique actif.** Après installation et redémarrage, cette intégration peut commander les bornes dès qu'un seuil est dépassé.
 
 ## Installation HACS
 
@@ -20,10 +20,25 @@ Installation manuelle possible en copiant `custom_components/ev_load_manager` da
 
 ## Consultation
 
-Trois capteurs par borne : état de surveillance (attributs des mesures et de la configuration), consigne initiale mémorisée et commande initiale mémorisée. Les snapshots disposent d'une structure de stockage persistante, mais ne sont pas encore alimentés : les deux derniers capteurs restent inconnus jusqu'à l'implémentation du pilotage.
+Trois capteurs par borne : état de surveillance (attributs des mesures et de la configuration), consigne initiale mémorisée et commande initiale mémorisée. Les valeurs initiales sont maintenant mémorisées avant la première réduction, conservées après chaque modification et stockées sur disque.
 
-**Hors périmètre de la v0.1.0** : réaction à un dépassement, commandes vers les bornes, restauration automatique, interface Lovelace spécifique.
+## Pilotage v0.2.0
+
+- Dépassement calculé indépendamment sur L1, L2 et L3 ; déclenchement sur changement des entités et vérification toutes les 5 secondes.
+- Choix de la borne ayant le plus fort courant mesuré sur une phase en dépassement, puis réduction de sa consigne par pas de 1 A. Recalcul après chaque acquittement.
+- Mémorisation persistante de la consigne initiale, de l'état initial de commande et des courants initiaux par phase AVANT le premier changement.
+- À défaut de retour de consigne dans les 12 secondes, tentative de commande d'arrêt. Une borne à son courant minimum peut également être arrêtée en dernier recours.
+- Restauration progressive par pas de 1 A lorsque les phases disposent d'une marge de 2 A ; priorité à la borne la moins consommatrice puis à la plus fortement réduite. Redémarrage conditionnel d'une borne arrêtée par le module si la marge est suffisante pour son minimum.
+- Un capteur global expose les courants, seuils et dépassements pour les trois phases.
+
+**Attention : cette version envoie de vraies commandes de recharge.** Valider sur une instance de test ou avec des bornes simulées avant le déploiement en production. Une consigne acquittée dans HA ne démontre pas à elle seule le changement du courant physique.
+
+## Tests
+
+Exécuter `python -m pip install pytest` puis `python -m pytest -q tests`. GitHub Actions exécute la même suite aux push et pull requests. Les tests de décision ne remplacent pas des tests d'intégration avec les services HA.
+
+**À approfondir :** comportement des indisponibilités, durée de réponse effective des bornes, cas de redémarrage, restauration après un arrêt et test de bout en bout.
 
 ## Validation
 
-Syntaxe Python initialement contrôlée. L'exécution du flux de configuration dans une version récente de Home Assistant nécessite encore un test réel.
+La configuration a été validée par l'utilisateur dans Home Assistant. Le nouveau pilotage nécessite encore une validation pratique sur une instance de test.
