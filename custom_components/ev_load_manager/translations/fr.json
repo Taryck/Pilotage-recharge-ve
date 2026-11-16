@@ -86,5 +86,29 @@
         "unsupported_control_domain": "Type d'entité de commande non pris en charge."
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "installation_status": {
+        "name": "État de l'installation",
+        "state": {
+          "normal": "Normal",
+          "overload": "Dépassement",
+          "unavailable": "Indisponible"
+        }
+      },
+      "status": {
+        "name": "{charger} - état",
+        "state": {
+          "monitoring": "Surveillance"
+        }
+      },
+      "saved_current": {
+        "name": "{charger} - consigne mémorisée"
+      },
+      "saved_running": {
+        "name": "{charger} - commande mémorisée"
+      }
+    }
   }
 }
