@@ -43,6 +43,16 @@ class Charger:
         self.stop_remaining = 0.0
         return True
 
+    def resume(self) -> bool:
+        """Resume a suspended charging session without resetting delivered kWh."""
+        if self.initial_for_session is None or self.delivered_kwh >= self.target_kwh:
+            return self.start()
+        if not self.hardware_min <= self.commanded_current <= self.hardware_max:
+            return False
+        self.status = "charging"
+        self.stop_remaining = 0.0
+        return True
+
     def command(self, current: float) -> bool:
         """Reject bad settings without changing current commanded or measured."""
         if self.ignore_commands or not self.hardware_min <= current <= self.hardware_max:
