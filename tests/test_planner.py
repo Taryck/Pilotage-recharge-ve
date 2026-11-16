@@ -100,3 +100,20 @@ def test_no_restoration_past_original_setpoint():
     limits = dict.fromkeys(("l1", "l2", "l3"), 20)
     assert decide(dict.fromkeys(limits, 15), limits,
                   [c("borne", l1=8, amps=16, original=16)]).action == "idle"
+
+
+def test_monophase_recovery_unaffected_phase_needs_no_two_amp_margin():
+    limits = {"l1": 20, "l2": 20, "l3": 20}
+    # L1 has 3 A spare; the other phases are not used by this charger.
+    result = decide({"l1": 17, "l2": 19.5, "l3": 19.5}, limits,
+                    [c("mono", l1=9, l2=0, l3=0, amps=10, original=16)])
+    assert (result.action, result.target) == ("restore", 11)
+
+
+def test_fractional_gap_below_one_amp_does_not_issue_partial_step():
+    result = decide(
+        {"l1": 22, "l2": 15, "l3": 15},
+        {"l1": 20, "l2": 20, "l3": 20},
+        [c("half", l1=7, amps=6.5, minimum=6)],
+    )
+    assert result.action == "stop"
