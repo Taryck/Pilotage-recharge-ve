@@ -169,7 +169,8 @@ async def settle_tasks(tasks):
 
 def test_reduction_wave_does_not_wait_for_slow_charger():
     async def run():
-        controller, hass, subs, store, tasks, _ = setup(3)
+        controller, hass, subs, store, tasks, _ = setup(3, limit=34)
+        hass.states.set("sensor.installation_l1", 42)
         controller._request_evaluation = lambda: None
         hass.services.slow.add("number.charger_0")
         await controller._run_once()
@@ -342,7 +343,8 @@ def test_restart_grace_is_installed_before_command_acknowledgement():
 
 def test_batch_calculation_is_auditable_and_commands_only_modified_chargers():
     async def run():
-        controller, hass, subs, store, tasks, _ = setup(3, limit=20)
+        controller, hass, subs, store, tasks, _ = setup(3, limit=30)
+        hass.states.set("sensor.installation_l1", 38)
         controller._request_evaluation = lambda: None
         # One site phase is 28A; three stations 16/12/10A.
         hass.states.set("sensor.charger_0_l1", 16)
