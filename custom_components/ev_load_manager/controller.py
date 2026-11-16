@@ -6,6 +6,8 @@ another charger's acknowledgement. Each pending action is retried independently.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
+from datetime import datetime, timezone
 from dataclasses import dataclass
 import logging
 from math import isfinite
@@ -20,7 +22,7 @@ from .const import (
     CONF_ACK_TIMEOUT, CONF_ACK_RETRIES, CONF_CONTROL_INTERVAL, CONF_SETTLE_DELAY,
     DEFAULT_ACK_TIMEOUT, DEFAULT_ACK_RETRIES, DEFAULT_CONTROL_INTERVAL, DEFAULT_SETTLE_DELAY,
 )
-from .planner import Charger, excesses
+from .planner import Charger, excesses, plan_reductions
 from .sensor import current_in_amp
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,6 +69,8 @@ class LoadController:
         self._stopping = False
         self._last_error: str | None = None
         self._last_notification: str | None = None
+        self.audit = deque(maxlen=200)
+        self._previous_overload = None
 
     def _options(self) -> dict:
         return {**self.entry.data, **self.entry.options}
@@ -130,8 +134,32 @@ class LoadController:
         if self._task is None or self._task.done():
             self._task = self.hass.async_create_task(self.async_evaluate())
 
+    def _record(self, event: str, **data) -> None:
+        """Trace decisions, virtual steps, commands and acknowledgements.
+
+        Logs are available via HA logbook, integration logger, custom event,
+        and the last 20 items on the installation status sensor.
+        """
+        entry = {
+            "time": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "entry_id": self.entry.entry_id,
+            **data,
+        }
+        self.audit.append(entry)
+        _LOGGER.info("EV Load Manager | %s | %s", event, data)
+        self.hass.bus.async_fire("ev_load_manager_audit", entry)
+        # Home Assistant logbook persists operational traces in Recorder.
+        message = f"{event}: " + ", ".join(f"{k}={v}" for k, v in data.items())
+        self.hass.async_create_task(self.hass.services.async_call(
+            "logbook", "log",
+            {"name": "EV Load Manager", "message": message,
+             "domain": "ev_load_manager"}, blocking=False,
+        ))
+
     async def _notify_error(self, message: str):
         _LOGGER.error("EV load management: %s", message)
+        self._record("error", message=message)
         if self._last_notification == message:
             return
         self._last_notification = message
@@ -265,6 +293,7 @@ class LoadController:
             return False
         pending = Pending(action=action, target=target, sent_at=now, attempts=1, sending=True)
         self.pending[sub.subentry_id] = pending
+        self._record("command", charger=sub.title, action=action, target=target)
         if action == "start":
             # Guard the first physical ramp BEFORE the control entity may
             # flip to "active". _prune_snapshots runs ahead of ack processing.
@@ -275,7 +304,6 @@ class LoadController:
 
     async def _expire_pending(self, subs: dict, now: float):
         delay = float(self._setting(CONF_ACK_TIMEOUT, DEFAULT_ACK_TIMEOUT))
-        retries = int(self._setting(CONF_ACK_RETRIES, DEFAULT_ACK_RETRIES))
         settle = float(self._setting(CONF_SETTLE_DELAY, DEFAULT_SETTLE_DELAY))
         for sid, pending in list(self.pending.items()):
             sub = subs.get(sid)
@@ -283,6 +311,8 @@ class LoadController:
                 self.pending.pop(sid, None)
                 continue
             if self._acknowledged(sub, pending):
+                self._record("acknowledged", charger=sub.title,
+                             action=pending.action, target=pending.target)
                 self.pending.pop(sid, None)
                 self.ready_at[sid] = now + settle
                 if pending.action == "stop":
@@ -308,16 +338,13 @@ class LoadController:
                 continue
             if pending.sending or now - pending.sent_at < delay:
                 continue
-            if pending.attempts <= retries:
-                pending.attempts += 1
-                pending.sent_at = now
-                pending.sending = True
-                self._schedule_command(sub, pending)
-                continue
             self.pending.pop(sid, None)
+            self._record("ack_timeout", charger=sub.title,
+                         action=pending.action, target=pending.target,
+                         delay_seconds=delay)
             if pending.action in ("reduce", "restore", "start", "prepare_restart"):
-                _LOGGER.warning("No acknowledgement after %s attempts for %s: requesting stop",
-                                pending.attempts, sub.title)
+                # No retry: the next action is immediate stop. Other charger
+                # acknowledgements do not hold up this decision.
                 await self._issue(sub, "stop", sub.data[CONF_STOP], now)
             elif pending.action == "stop":
                 await self._notify_error(
@@ -377,50 +404,80 @@ class LoadController:
                  if c.identifier not in self.pending
                  and now >= self.ready_at.get(c.identifier, 0)]
         if hot:
-            # Never wait for a slow charger if others can lower the excess.
-            # Every charger is asked to drop at most 1 A during one wave.
-            invalid = [
-                c for c in ready if c.active and (
-                    c.setpoint is None or any(x is None for x in c.currents.values())
-                )
-            ]
-            for c in invalid:
-                sub = subs[c.identifier]
-                if c.setpoint is not None:
-                    await self._remember(sub, c.setpoint)
+            excess = {p: round(float(over[p]), 3) for p in PHASES}
+            if self._previous_overload != excess:
+                self._record("overload", total=totals, limits=limits, excess=excess)
+                self._previous_overload = excess
+
+            # Unreliable chargers are stopped, rather than treated as 0 A.
+            invalid = [c for c in ready if c.active and (
+                c.setpoint is None or any(x is None for x in c.currents.values())
+            )]
+            for charger in invalid:
+                sub = subs[charger.identifier]
+                if charger.setpoint is not None:
+                    await self._remember(sub, charger.setpoint)
                 await self._issue(sub, "stop", sub.data[CONF_STOP], now)
-            remaining = {p: float(over[p]) for p in PHASES}
-            ranked = sorted(
-                (c for c in ready if c.active and c not in invalid and
-                 c.largest_draw(hot) > EPS),
-                key=lambda c: (-c.largest_draw(hot), c.identifier),
+
+            # Pending reductions must be accounted for in virtual planning,
+            # so slow physical ramps cannot make us plan the same amps twice.
+            reserved = {}
+            for c in chargers:
+                pending = self.pending.get(c.identifier)
+                if pending is not None and pending.action == "reduce" and c.setpoint is not None:
+                    reserved[c.identifier] = max(0.0, c.setpoint - float(pending.target))
+
+            blocked = frozenset(
+                {c.identifier for c in chargers if
+                 c.identifier in self.pending or
+                 now < self.ready_at.get(c.identifier, 0)}
+                | {c.identifier for c in invalid}
             )
-            for c in ranked:
-                if not any(remaining[p] > EPS and p in c.phases() for p in hot):
-                    break
-                sub = subs[c.identifier]
-                if c.setpoint is not None and c.setpoint - c.minimum >= 1 - EPS:
-                    await self._remember(sub, c.setpoint)
-                    await self._issue(sub, "reduce", round(c.setpoint - 1, 3), now)
-                    for p in c.phases():
-                        remaining[p] = max(0.0, remaining[p] - 1.0)
-            # Do not stop a minimum-current charger while another adjustment
-            # is pending; let it change the physical reading first.
-            if not self.pending and any(v > EPS for v in remaining.values()):
-                minimum_only = sorted(
-                    (c for c in ranked if c.setpoint is not None
-                     and c.setpoint - c.minimum < 1 - EPS),
+            plan = plan_reductions(
+                totals, limits, chargers, reserved=reserved,
+                unavailable_ids=blocked,
+            )
+            if plan.steps:
+                self._record("calculation_start", excess=excess,
+                             chargers=len(chargers))
+                for position, (sid, phase_names, before, after) in enumerate(plan.steps, 1):
+                    self._record("calculation_step", step=position,
+                                 charger=subs[sid].title, phases=phase_names,
+                                 before_a=before, after_a=after)
+                self._record("calculation_result",
+                             targets={subs[sid].title: target
+                                      for sid, target in plan.targets.items()},
+                             remaining=plan.remaining)
+            for sid, target in plan.targets.items():
+                charger = next(c for c in chargers if c.identifier == sid)
+                sub = subs[sid]
+                await self._remember(sub, float(charger.setpoint))
+                await self._issue(sub, "reduce", target, now)
+
+            # No stop based only on stale physical readings: await any
+            # outstanding reductions first. Once exhausted, stop a charger at
+            # minimum only if overload persists.
+            if not self.pending and any(value > EPS for value in plan.remaining.values()):
+                minimum = sorted(
+                    (c for c in ready if c.active and c.setpoint is not None
+                     and c.identifier not in plan.targets
+                     and c.largest_draw(hot) > EPS),
                     key=lambda c: (-c.largest_draw(hot), c.identifier),
                 )
-                for c in minimum_only:
-                    if not any(remaining[p] > EPS and p in c.phases() for p in hot):
-                        break
-                    sub = subs[c.identifier]
-                    await self._remember(sub, c.setpoint)
+                residual = dict(plan.remaining)
+                for charger in minimum:
+                    if not any(residual[p] > EPS for p in charger.phases()):
+                        continue
+                    sub = subs[charger.identifier]
+                    await self._remember(sub, float(charger.setpoint))
                     await self._issue(sub, "stop", sub.data[CONF_STOP], now)
-                    for p in c.phases():
-                        remaining[p] = max(0, remaining[p] - max(0, c.currents[p] or 0))
+                    for phase in charger.phases():
+                        residual[phase] = max(0.0, residual[phase] - (
+                            charger.currents[phase] or 0.0))
             return
+        if self._previous_overload is not None:
+            self._record("overload_cleared", totals=totals)
+            self._previous_overload = None
 
         # Do not increase charge while still awaiting the outcome of shedding.
         if self.pending:
