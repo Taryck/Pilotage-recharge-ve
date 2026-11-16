@@ -348,8 +348,9 @@ class LoadController:
                 changed = True
             elif (charger.active and charger.setpoint is not None
                   and not snap.get("stopped_by_module")
-                  and charger.setpoint >= min(float(snap["initial_current_a"]),
-                                               charger.maximum) - EPS):
+                  and abs(charger.setpoint - min(
+                      float(snap["initial_current_a"]), charger.maximum
+                  )) <= EPS):
                 self.runtime.snapshots.pop(sid, None)
                 changed = True
         if changed:
