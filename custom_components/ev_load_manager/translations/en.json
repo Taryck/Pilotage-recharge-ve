@@ -86,5 +86,29 @@
         "unsupported_control_domain": "Unsupported charge-command entity domain."
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "installation_status": {
+        "name": "Installation status",
+        "state": {
+          "normal": "Normal",
+          "overload": "Overload",
+          "unavailable": "Unavailable"
+        }
+      },
+      "status": {
+        "name": "{charger} status",
+        "state": {
+          "monitoring": "Monitoring"
+        }
+      },
+      "saved_current": {
+        "name": "{charger} saved current"
+      },
+      "saved_running": {
+        "name": "{charger} saved command"
+      }
+    }
   }
 }
