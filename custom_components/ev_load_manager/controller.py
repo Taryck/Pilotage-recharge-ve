@@ -155,11 +155,18 @@ class LoadController:
         self.hass.bus.async_fire("ev_load_manager_audit", entry)
         # Home Assistant logbook persists operational traces in Recorder.
         message = f"{event}: " + ", ".join(f"{k}={v}" for k, v in data.items())
-        self.hass.async_create_task(self.hass.services.async_call(
-            "logbook", "log",
-            {"name": "EV Load Manager", "message": message,
-             "domain": "ev_load_manager"}, blocking=False,
-        ))
+        self.hass.async_create_task(self._logbook(message))
+
+    async def _logbook(self, message: str) -> None:
+        """Journal is best effort; a disabled Logbook must not stop regulation."""
+        try:
+            await self.hass.services.async_call(
+                "logbook", "log",
+                {"name": "EV Load Manager", "message": message,
+                 "domain": "ev_load_manager"}, blocking=False,
+            )
+        except Exception:
+            _LOGGER.debug("Could not forward regulation event to Logbook", exc_info=True)
 
     async def _notify_error(self, message: str):
         _LOGGER.error("EV load management: %s", message)
