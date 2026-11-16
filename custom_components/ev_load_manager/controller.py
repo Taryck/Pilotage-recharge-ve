@@ -38,6 +38,7 @@ class Pending:
     attempts: int = 0
     sending: bool = False
     source_setpoint: float | None = None
+    measured_at_send: dict[str, float | None] | None = None
 
 
 def _number(hass: HomeAssistant, entity_id: str | None) -> float | None:
@@ -228,7 +229,25 @@ class LoadController:
         d = sub.data
         if pending.action in ("reduce", "restore", "prepare_restart"):
             value = _number(self.hass, d[CONF_SETPOINT])
-            return value is not None and abs(value - float(pending.target)) <= 0.1
+            if value is None or abs(value - float(pending.target)) > 0.1:
+                return False
+            if pending.action == "reduce" and pending.measured_at_send:
+                # HA may acknowledge the setpoint before the physical output
+                # changes. Require the requested reduction on each phase
+                # that was actually drawing current when the wave was sent.
+                reduction = max(
+                    0.0, (pending.source_setpoint or 0.0) - float(pending.target)
+                )
+                for phase, initial in pending.measured_at_send.items():
+                    if initial is None:
+                        return False
+                    if initial <= EPS:
+                        continue
+                    entity = d.get(f"{CONF_CURRENT_PREFIX}{phase}")
+                    actual = current_in_amp(self.hass, entity)
+                    if actual is None or actual > max(0.0, initial - reduction) + 0.4:
+                        return False
+            return True
         state = self.hass.states.get(d[CONF_CONTROL])
         if state is None:
             return False
@@ -293,8 +312,15 @@ class LoadController:
         if sub.subentry_id in self.pending:
             return False
         source = _number(self.hass, sub.data[CONF_SETPOINT]) if action == "reduce" else None
+        before = ({
+            phase: current_in_amp(
+                self.hass, sub.data.get(f"{CONF_CURRENT_PREFIX}{phase}")
+            ) if sub.data.get(f"{CONF_CURRENT_PREFIX}{phase}") else 0.0
+            for phase in PHASES
+        } if action == "reduce" else None)
         pending = Pending(action=action, target=target, sent_at=now, attempts=1,
-                          sending=True, source_setpoint=source)
+                          sending=True, source_setpoint=source,
+                          measured_at_send=before)
         self.pending[sub.subentry_id] = pending
         self._record("command", charger=sub.title, action=action, target=target)
         if action == "start":
