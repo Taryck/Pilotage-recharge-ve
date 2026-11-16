@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import ast
 import asyncio
+from collections import deque
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from datetime import timedelta
 import importlib.util
@@ -52,10 +54,12 @@ def controller_class():
 
     names = {
         "asyncio": asyncio, "dataclass": dataclass, "timedelta": timedelta,
+        "deque": deque, "datetime": datetime, "timezone": timezone,
         "isfinite": isfinite, "HomeAssistant": object,
         "callback": lambda fn: fn, "_LOGGER": logging.getLogger(__name__),
         "EPS": 0.05, "PHASES": PHASES,
         "Charger": plan.Charger, "excesses": plan.excesses,
+        "plan_reductions": plan.plan_reductions,
         "current_in_amp": amp,
         "CONF_CURRENT_PREFIX": "current_", "CONF_THRESHOLD_PREFIX": "max_",
         "CONF_MIN": "min_current", "CONF_MAX": "max_current",
@@ -166,6 +170,7 @@ async def settle_tasks(tasks):
 def test_reduction_wave_does_not_wait_for_slow_charger():
     async def run():
         controller, hass, subs, store, tasks, _ = setup(3)
+        controller._request_evaluation = lambda: None
         hass.services.slow.add("number.charger_0")
         await controller._run_once()
         await asyncio.sleep(0.005)
@@ -174,7 +179,8 @@ def test_reduction_wave_does_not_wait_for_slow_charger():
         assert {data["entity_id"] for _, _, data in calls[:3]} == {
             "number.charger_0", "number.charger_1", "number.charger_2"
         }
-        assert all(data["value"] == 15 for _, _, data in calls[:3])
+        assert all(6 <= data["value"] < 16 for _, _, data in calls[:3])
+        assert sum(16 - data["value"] for _, _, data in calls[:3]) == 8
         assert len(store.saved) >= 3  # snapshots persisted BEFORE commands
         for task in tasks:
             task.cancel()
@@ -206,20 +212,17 @@ def test_snapshot_cleared_when_maximum_is_lowered():
     asyncio.run(run())
 
 
-def test_timeout_retries_before_emergency_stop():
+def test_timeout_orders_stop_without_second_attempt():
     async def run():
         controller, hass, subs, store, tasks, Pending = setup(1)
-        slow = "number.charger_0"
-        hass.services.slow.add(slow)
+        controller._request_evaluation = lambda: None
         controller.pending["charger_0"] = Pending("reduce", 15, -100, attempts=1)
         await controller._expire_pending(subs, 1)
-        assert controller.pending["charger_0"].attempts == 2
-        assert controller.pending["charger_0"].action == "reduce"
-        await asyncio.sleep(.01)
-        controller.pending["charger_0"].sending = False
-        controller.pending["charger_0"].sent_at = -100
-        await controller._expire_pending(subs, 1)
         assert controller.pending["charger_0"].action == "stop"
+        assert not any(
+            action.action == "reduce" for action in controller.pending.values()
+        )
+        await asyncio.sleep(0)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
