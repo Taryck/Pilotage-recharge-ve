@@ -60,6 +60,7 @@ class LoadController:
         self.remove_callbacks = []
         self.pending: dict[str, Pending] = {}
         self.ready_at: dict[str, float] = {}
+        self.startup_grace_until: dict[str, float] = {}
         self._dirty = False
         self._task: asyncio.Task | None = None
         self._stopping = False
@@ -274,6 +275,9 @@ class LoadController:
                         snap["stopped_by_module"] = True
                         await self._persist()
                 elif pending.action == "start":
+                    # A freshly restarted charger may still draw zero while
+                    # it ramps up physically; do not erase its snapshot yet.
+                    self.startup_grace_until[sid] = now + max(3.0, settle + 2.0)
                     snap = self.runtime.snapshots.get(sid)
                     if snap is not None:
                         snap["stopped_by_module"] = False
@@ -295,7 +299,7 @@ class LoadController:
                 self.hass.async_create_task(self._send_background(sub, pending))
                 continue
             self.pending.pop(sid, None)
-            if pending.action in ("reduce", "prepare_restart"):
+            if pending.action in ("reduce", "restore", "start", "prepare_restart"):
                 _LOGGER.warning("No acknowledgement after %s attempts for %s: requesting stop",
                                 pending.attempts, sub.title)
                 await self._issue(sub, "stop", sub.data[CONF_STOP], now)
@@ -319,7 +323,9 @@ class LoadController:
             # charging session: there is no original charge left to restore.
             no_draw = all(value is not None and abs(value) <= EPS
                           for value in charger.currents.values())
-            if (charger.active and no_draw) or (
+            if (charger.active and no_draw
+                    and asyncio.get_running_loop().time() >=
+                    self.startup_grace_until.get(sid, 0)) or (
                 not charger.active and not snap.get("stopped_by_module")
             ):
                 self.runtime.snapshots.pop(sid, None)
