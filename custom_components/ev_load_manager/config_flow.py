@@ -171,7 +171,7 @@ class EvLoadManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Keep previous subentries not in this simulation batch; no automatic
         # deletion of charger configuration is performed.
         self.hass.config_entries.async_update_entry(
-            existing_entry, data=config, subentries=updated,
+            existing_entry, data=config, options={}, subentries=updated,
         )
         return self.async_abort(reason="already_configured")
 
