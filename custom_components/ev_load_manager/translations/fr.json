@@ -10,7 +10,11 @@
           "current_l2": "Courant total L2",
           "max_l2": "Seuil maximal L2 (A)",
           "current_l3": "Courant total L3",
-          "max_l3": "Seuil maximal L3 (A)"
+          "max_l3": "Seuil maximal L3 (A)",
+          "ack_timeout": "Délai d'acquittement par tentative (secondes)",
+          "ack_retries": "Nombre de nouvelles tentatives avant arrêt",
+          "control_interval": "Intervalle de contrôle (secondes)",
+          "settle_delay": "Attente après acquittement avant nouvelle action (secondes)"
         }
       }
     },
@@ -29,7 +33,11 @@
           "current_l2": "Courant total L2",
           "max_l2": "Seuil maximal L2 (A)",
           "current_l3": "Courant total L3",
-          "max_l3": "Seuil maximal L3 (A)"
+          "max_l3": "Seuil maximal L3 (A)",
+          "ack_timeout": "Délai d'acquittement par tentative (secondes)",
+          "ack_retries": "Nombre de nouvelles tentatives avant arrêt",
+          "control_interval": "Intervalle de contrôle (secondes)",
+          "settle_delay": "Attente après acquittement avant nouvelle action (secondes)"
         }
       }
     }
@@ -74,7 +82,8 @@
         "missing_command_value": "Les valeurs de commande sont obligatoires",
         "same_command_values": "Les valeurs de marche et d'arrêt doivent différer",
         "invalid_select_option": "Valeur absente des options du select",
-        "invalid_boolean_values": "Pour switch et input_boolean, utiliser on et off"
+        "invalid_boolean_values": "Pour switch et input_boolean, utiliser on et off",
+        "unsupported_control_domain": "Type d'entité de commande non pris en charge."
       }
     }
   }
