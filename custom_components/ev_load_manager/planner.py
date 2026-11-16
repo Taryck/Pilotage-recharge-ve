@@ -1,14 +1,15 @@
 """Pure, testable load-balancing decisions. All values are amperes.
 
-The planner emits at most ONE one-ampere adjustment. The HA adapter must
-observe acknowledgement before requesting another decision.
+The planner computes a complete set of targets using virtual 1 A steps,
+then the controller sends one command per changed charger in parallel.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping
 
-PHASES = ("l1", "l2", "l3")
+from .const import PHASES
+
 EPS = 0.00001
 
 
@@ -117,3 +118,85 @@ def decide(totals: Mapping[str, float | None],
                         min(c.maximum, c.original, round(c.setpoint + 1, 3)),
                         "Recovery headroom")
     return Decision("idle", reason="No adjustment needed")
+
+
+@dataclass(frozen=True)
+class ReductionPlan:
+    """Full target set after simulating all 1 A steps with re-ranking."""
+
+    targets: Mapping[str, float]
+    steps: tuple[tuple[str, str, float, float], ...]
+    remaining: Mapping[str, float]
+
+
+def plan_reductions(
+    totals: Mapping[str, float | None],
+    limits: Mapping[str, float],
+    chargers: list[Charger],
+    *,
+    reserved: Mapping[str, float] | None = None,
+    unavailable_ids: frozenset[str] = frozenset(),
+) -> ReductionPlan:
+    """Compute the *whole* shedding plan before sending any HA service call.
+
+    Rank by highest PROJECTED amperage on an overloaded phase. At equal draw,
+    prefer the charger closest to the ORIGINAL setpoint. Use its current setpoint
+    as original when no snapshot exists. Lower one virtual amp, recompute the
+    entire ranking and repeat, then return aggregate final setpoints.
+
+    One reduced charging amp is assumed to free one amp on EVERY active phase,
+    including for three-phase chargers; this is a *plan*, not a physical ack.
+    A caller can pass reductions already dispatched but not yet reflected in
+    meter readings in reserved to avoid sending unnecessary extra reductions.
+    """
+    over = excesses(totals, limits)
+    if any(v is None for v in over.values()):
+        return ReductionPlan({}, (), {p: 0.0 for p in PHASES})
+    remaining = {p: float(over[p]) for p in PHASES}
+    reserved = reserved or {}
+    projected = {}
+    for c in chargers:
+        if c.setpoint is None or not c.active:
+            continue
+        already = max(0.0, float(reserved.get(c.identifier, 0.0)))
+        projected[c.identifier] = float(c.setpoint) - already
+        for p in c.phases():
+            remaining[p] = max(0.0, remaining[p] - already)
+
+    targets: dict[str, float] = {}
+    steps: list[tuple[str, str, float, float]] = []
+    while any(v > EPS for v in remaining.values()):
+        hot = {p for p, v in remaining.items() if v > EPS}
+        eligible = []
+        for c in chargers:
+            if c.identifier in unavailable_ids or not c.active or c.setpoint is None:
+                continue
+            if any(v is None for v in c.currents.values()):
+                continue
+            here = projected[c.identifier]
+            if here - c.minimum < 1 - EPS:
+                continue
+            relevant = c.phases()
+            if not hot.intersection(relevant):
+                continue
+            # Measurements can differ from the setpoint by <1 A and include
+            # physical ramping. Calculate projected *measured* draw.
+            draw = max(max(0.0, (c.currents[p] or 0.0)
+                               - (c.setpoint - here))
+                       for p in relevant if p in hot)
+            distance_from_original = max(0.0, (
+                c.original if c.original is not None else c.setpoint
+            ) - here)
+            eligible.append((-draw, distance_from_original, c.identifier, c))
+        if not eligible:
+            break
+        eligible.sort(key=lambda item: (item[0], item[1], item[2]))
+        selected = eligible[0][3]
+        before = projected[selected.identifier]
+        after = round(before - 1.0, 3)
+        projected[selected.identifier] = after
+        targets[selected.identifier] = after
+        for p in selected.phases():
+            remaining[p] = max(0.0, remaining[p] - 1.0)
+        steps.append((selected.identifier, ",".join(sorted(hot)), before, after))
+    return ReductionPlan(targets, tuple(steps), remaining)
