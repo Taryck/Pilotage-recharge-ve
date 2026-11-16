@@ -21,7 +21,7 @@ Les configurations manuelles et les configurations importées depuis le simulate
 |---|---|
 | **Courant total L1, L2, L3** | Trois capteurs HA du courant total *réellement mesuré* sur chaque phase. Ils doivent inclure les bornes. Pour le parking simulé : trois capteurs virtuels du simulateur. |
 | **Seuil maximal L1, L2, L3 (A)** | Courant autorisé par phase ; un dépassement est calculé indépendamment sur chaque phase : `max(0, courant_mesuré - seuil)`. |
-| **Délai de confirmation de réduction (s)** | Temps maximum pour vérifier **la nouvelle consigne ET la réduction physique correspondante sur les phases utilisées**. Défaut **6 s**, plage 1–120 s. Une réduction importante peut nécessiter un délai plus long (la borne simulée varie entre 1 et 2 A/s). Pendant ce délai les autres bornes sont pilotées normalement. |
+| **Délai de confirmation de réduction (s)** | Délai maximal **sans progrès mesuré** pour une réduction. Défaut **6 s**, plage 1–120 s. La consigne HA ET la réduction physique totale doivent être confirmées, mais le délai est prolongé tant que le courant descend d'au moins 0,5 A entre observations. Une baisse de 8 A peut donc prendre plus de 6 s sans déclencher d'arrêt injustifié. Pendant ce temps, les autres bornes sont pilotées normalement. |
 | **Intervalle de contrôle (s)** | Vérification périodique même sans nouveau changement d'état. Défaut **1 s**, plage 0,2–30 s. |
 | **Attente après acquittement (s)** | Délai propre à chaque borne avant une **nouvelle modification de sa consigne**, laissant au courant physique le temps d'évoluer. Défaut **1 s**, plage 0–30 s. |
 
@@ -59,7 +59,7 @@ Sur événement de capteur ou à chaque intervalle de contrôle, on calcule les 
 5. Lui retirer **virtuellement 1 A**, et retirer le gain prévu sur toutes les phases sur lesquelles elle consomme (une borne triphasée libère jusqu'à 1 A sur chacune de ses trois phases).
 6. **Reclasser toutes les bornes** en tenant compte des valeurs projetées, puis refaire un pas virtuel de 1 A jusqu'à compenser tous les dépassements possibles.
 7. Regrouper les pas virtuels : on obtient **une seule consigne finale par borne**. Ce n'est qu'ensuite que toutes les commandes sont envoyées, sans attendre la réponse des autres bornes.
-8. Contrôler les nouvelles consignes **et les courants réellement mesurés**. En cas de non-confirmation après le délai configuré, envoyer directement **l'arrêt** à la borne, **sans réessai**.
+8. Contrôler les nouvelles consignes **et les courants réellement mesurés**. En cas de non-confirmation après le délai configuré **sans progrès**, envoyer directement **l'arrêt** à la borne, **sans réessai**. Une borne qui continue effectivement à diminuer son courant n'est pas arrêtée uniquement parce qu'une grosse réduction prend plus longtemps.
 9. Recalculer les dépassements réels à la vague suivante ; une réduction encore en attente est prise en compte pour éviter de soustraire deux fois les mêmes ampères.
 
 **Exemple : trois bornes monophasées sur L1 à 16, 12 et 10 A.**
