@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
+from math import isfinite
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -38,13 +39,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not all(
                 isinstance(key, str)
                 and isinstance(value, dict)
-                and (
-                    value.get("initial_current_a") is None
-                    or (
-                        isinstance(value["initial_current_a"], (int, float))
-                        and 0 <= value["initial_current_a"] <= 10000
-                    )
-                )
+                and isinstance(value.get("initial_current_a"), (int, float))
+                and isfinite(float(value["initial_current_a"]))
+                and 0 <= float(value["initial_current_a"]) <= 10000
                 for key, value in snapshots.items()
             ):
                 raise ValueError("Invalid saved charger snapshot")
