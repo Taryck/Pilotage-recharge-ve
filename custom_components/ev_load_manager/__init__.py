@@ -1,4 +1,4 @@
-"""EV load manager: configuration and read-only monitoring, version 0.1."""
+"""EV Load Manager Home Assistant integration."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
+from .controller import LoadController
 
 PLATFORMS = ["sensor"]
 STORAGE_VERSION = 1
@@ -16,9 +17,9 @@ STORAGE_VERSION = 1
 
 @dataclass
 class Runtime:
-    """Runtime memory and persistent snapshots for a single installation."""
     store: Store
     snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
+    controller: LoadController | None = None
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -28,6 +29,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = runtime
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    runtime.controller = LoadController(hass, entry)
+    await runtime.controller.async_start()
     return True
 
 
@@ -36,4 +39,7 @@ async def _options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    runtime = entry.runtime_data
+    if runtime.controller:
+        await runtime.controller.async_stop()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
