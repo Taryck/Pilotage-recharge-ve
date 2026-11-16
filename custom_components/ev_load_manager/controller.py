@@ -120,6 +120,12 @@ class LoadController:
         self.runtime.snapshots[sub.subentry_id] = {
             "initial_current_a": current,
             "initial_command": control.state if control else None,
+            "initial_phase_currents_a": {
+                p: (current_in_amp(self.hass, sub.data[f"{CONF_CURRENT_PREFIX}{p}"])
+                    if sub.data.get(f"{CONF_CURRENT_PREFIX}{p}") else 0.0)
+                for p in PHASES
+            },
+            "stopped_by_module": False,
         }
         # Persist BEFORE any write to the charger.
         await self._persist()
@@ -145,17 +151,24 @@ class LoadController:
             _LOGGER.exception("Failed to change current for %s", sub.title)
         return False
 
-    async def _stop(self, sub) -> bool:
+    async def _command(self, sub, command_value: str) -> bool:
         d = sub.data
         entity_id = d[CONF_CONTROL]
         domain = entity_id.split(".", 1)[0]
-        stop_value = d[CONF_STOP]
+        stop_value = command_value
         if domain == "select":
             service, data = "select_option", {"option": stop_value}
         elif domain in ("switch", "input_boolean"):
             service, data = ("turn_off" if stop_value == "off" else "turn_on"), {}
         elif domain == "input_select":
             service, data = "select_option", {"option": stop_value}
+        elif domain in ("number", "input_number"):
+            try:
+                command_number = float(stop_value)
+            except (ValueError, TypeError):
+                _LOGGER.error("Invalid numeric charge command for %s", sub.title)
+                return False
+            service, data = "set_value", {"value": command_number}
         else:
             _LOGGER.error("Unsupported charge command domain: %s", domain)
             return False
@@ -167,13 +180,27 @@ class LoadController:
             deadline = loop.time() + ACK_TIMEOUT
             while loop.time() < deadline:
                 state = self.hass.states.get(entity_id)
-                if state is not None and state.state == stop_value:
+                if state is not None and (
+                    state.state == stop_value
+                    or (domain in ("number", "input_number")
+                        and _number(self.hass, entity_id) is not None
+                        and abs(_number(self.hass, entity_id) - float(stop_value)) < 0.1)
+                ):
                     return True
                 await asyncio.sleep(0.5)
         except Exception:
             _LOGGER.exception("Failed to stop charger %s", sub.title)
-        _LOGGER.error("Charger %s did not acknowledge stop command", sub.title)
+        _LOGGER.error("Charger %s did not acknowledge command %s", sub.title, stop_value)
         return False
+
+    async def _stop(self, sub) -> bool:
+        success = await self._command(sub, sub.data[CONF_STOP])
+        if success:
+            snap = self.runtime.snapshots.get(sub.subentry_id)
+            if snap is not None:
+                snap["stopped_by_module"] = True
+                await self._persist()
+        return success
 
     async def async_evaluate(self) -> None:
         if self.lock.locked():
@@ -184,6 +211,29 @@ class LoadController:
                 return
             totals, limits, chargers = self._state()
             decision = decide(totals, limits, chargers)
+            # Restart a charger that WE stopped only if its previous state was
+            # running, the installation has no overload, and starting at its
+            # minimum current cannot exceed the limits on any supply phase.
+            if decision.action == "idle" and all(
+                totals[p] is not None and totals[p] <= limits[p] for p in PHASES
+            ):
+                for sub in self._subs():
+                    snap = self.runtime.snapshots.get(sub.subentry_id, {})
+                    if not snap.get("stopped_by_module"):
+                        continue
+                    if snap.get("initial_command") != sub.data[CONF_START]:
+                        continue
+                    minimum = float(sub.data[CONF_MIN])
+                    if not all(
+                        limits[p] - totals[p] >= minimum + 2
+                        for p in PHASES
+                    ):
+                        continue
+                    self._last_action = loop.time()
+                    if await self._command(sub, sub.data[CONF_START]):
+                        snap["stopped_by_module"] = False
+                        await self._persist()
+                    return
             if decision.action == "idle":
                 return
             sub = next((s for s in self._subs()
