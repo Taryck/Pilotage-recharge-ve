@@ -1,0 +1,77 @@
+{
+  "title": "Gestion de recharge VE",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Installation électrique",
+        "data": {
+          "current_l1": "Courant total L1",
+          "max_l1": "Seuil maximal L1 (A)",
+          "current_l2": "Courant total L2",
+          "max_l2": "Seuil maximal L2 (A)",
+          "current_l3": "Courant total L3",
+          "max_l3": "Seuil maximal L3 (A)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Modifier les phases et les seuils",
+        "data": {
+          "current_l1": "Courant total L1",
+          "max_l1": "Seuil maximal L1 (A)",
+          "current_l2": "Courant total L2",
+          "max_l2": "Seuil maximal L2 (A)",
+          "current_l3": "Courant total L3",
+          "max_l3": "Seuil maximal L3 (A)"
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "charger": {
+      "title": "Borne de recharge",
+      "step": {
+        "user": {
+          "title": "Ajouter une borne",
+          "data": {
+            "name": "Nom de la borne",
+            "current_l1": "Courant de la borne L1",
+            "current_l2": "Courant de la borne L2",
+            "current_l3": "Courant de la borne L3",
+            "setpoint": "Entité de réglage du courant de charge",
+            "control_entity": "Entité de commande de recharge",
+            "start_value": "Valeur pour démarrer",
+            "stop_value": "Valeur pour arrêter",
+            "min_current": "Courant minimal (A)",
+            "max_current": "Courant maximal (A)"
+          }
+        },
+        "reconfigure": {
+          "title": "Modifier la borne",
+          "data": {
+            "name": "Nom de la borne",
+            "current_l1": "Courant de la borne L1",
+            "current_l2": "Courant de la borne L2",
+            "current_l3": "Courant de la borne L3",
+            "setpoint": "Entité de réglage du courant de charge",
+            "control_entity": "Entité de commande de recharge",
+            "start_value": "Valeur pour démarrer",
+            "stop_value": "Valeur pour arrêter",
+            "min_current": "Courant minimal (A)",
+            "max_current": "Courant maximal (A)"
+          }
+        }
+      },
+      "error": {
+        "invalid_limits": "Le minimum dépasse le maximum",
+        "missing_command_value": "Les valeurs de commande sont obligatoires",
+        "same_command_values": "Les valeurs de marche et d'arrêt doivent différer",
+        "invalid_select_option": "Valeur absente des options du select",
+        "invalid_boolean_values": "Pour switch et input_boolean, utiliser on et off"
+      }
+    }
+  }
+}
