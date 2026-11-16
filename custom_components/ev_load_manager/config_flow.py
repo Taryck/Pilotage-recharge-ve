@@ -131,8 +131,10 @@ class EvLoadManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="invalid_import")
             incoming.append((key, data))
 
-        existing_entry = self.hass.config_entries.async_entry_for_domain_unique_id(
-            DOMAIN, unique_id
+        existing_entry = next(
+            (entry for entry in self.hass.config_entries.async_entries(DOMAIN)
+             if entry.unique_id == unique_id),
+            None,
         )
         if existing_entry is None:
             return self.async_create_entry(
