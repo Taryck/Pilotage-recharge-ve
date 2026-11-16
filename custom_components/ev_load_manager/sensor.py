@@ -40,6 +40,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     for sub in entry.subentries.values():
         if sub.subentry_type == SUBENTRY_TYPE_CHARGER:
             entities.extend((ChargerStatus(hass, entry, sub), ChargerSavedCurrent(entry, sub), ChargerSavedRunState(entry, sub)))
+    for entity in entities:
+        entity.hass = hass
     async_add_entities(entities)
 
 
@@ -48,10 +50,22 @@ class ChargerBase(SensorEntity):
     _attr_should_poll = False
 
     def __init__(self, entry, sub) -> None:
+        self.hass = None
         self.entry = entry
         self.sub = sub
         self._attr_unique_id = f"{entry.entry_id}_{sub.subentry_id}_{self.kind}"
         self._attr_name = f"{sub.title} {self.label}"
+
+    async def async_added_to_hass(self):
+        """Update saved-state sensors whenever a snapshot is persisted."""
+        self.async_on_remove(
+            self.hass.bus.async_listen("ev_load_manager_snapshot_updated", self._snapshot_updated)
+        )
+
+    @callback
+    def _snapshot_updated(self, event):
+        if event.data.get("entry_id") == self.entry.entry_id:
+            self.async_write_ha_state()
 
     @property
     def snapshot(self):
@@ -89,6 +103,7 @@ class ChargerStatus(ChargerBase):
         self.hass = hass
 
     async def async_added_to_hass(self):
+        await super().async_added_to_hass()
         ids = [self.sub.data.get(f"{CONF_CURRENT_PREFIX}{p}") for p in PHASES]
         ids += [self.sub.data.get(CONF_SETPOINT), self.sub.data.get(CONF_CONTROL)]
         ids = list(filter(None, ids))
