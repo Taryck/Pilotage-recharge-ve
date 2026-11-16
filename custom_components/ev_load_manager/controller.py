@@ -425,6 +425,9 @@ class LoadController:
             snap = self.runtime.snapshots.get(c.identifier)
             if not snap or not snap.get("stopped_by_module"):
                 continue
+            # Wait for the stop ramp to physically reach zero before restart.
+            if any(v is None or v > EPS for v in c.currents.values()):
+                continue
             if snap.get("initial_command") != subs[c.identifier].data[CONF_START]:
                 continue
             phase_currents = snap.get("initial_phase_currents_a") or {}
