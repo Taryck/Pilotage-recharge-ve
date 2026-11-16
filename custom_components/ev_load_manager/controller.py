@@ -265,6 +265,11 @@ class LoadController:
             return False
         pending = Pending(action=action, target=target, sent_at=now, attempts=1, sending=True)
         self.pending[sub.subentry_id] = pending
+        if action == "start":
+            # Guard the first physical ramp BEFORE the control entity may
+            # flip to "active". _prune_snapshots runs ahead of ack processing.
+            settle = float(self._setting(CONF_SETTLE_DELAY, DEFAULT_SETTLE_DELAY))
+            self.startup_grace_until[sub.subentry_id] = now + max(3.0, settle + 2.0)
         self._schedule_command(sub, pending)
         return True
 
