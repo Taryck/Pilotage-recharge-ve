@@ -1,7 +1,7 @@
 {
   "domain": "ev_load_manager",
   "name": "Gestion de recharge VE",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "documentation": "https://github.com/Taryck/Pilotage-recharge-ve",
   "issue_tracker": "https://github.com/Taryck/Pilotage-recharge-ve/issues",
   "codeowners": [],
