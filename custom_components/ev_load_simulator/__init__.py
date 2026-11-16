@@ -20,6 +20,7 @@ class SimulationRuntime:
             thresholds={p: float(d[f"threshold_{p}"]) for p in ("l1", "l2", "l3")},
             seed=int(d["seed"]),
         )
+        self.scenario_id = "none"
         self.listeners = set()
         self.unsubscribe = None
 
