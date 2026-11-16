@@ -1,0 +1,13 @@
+"""Constants for EV Load Manager."""
+DOMAIN = "ev_load_manager"
+SUBENTRY_TYPE_CHARGER = "charger"
+PHASES = ("l1", "l2", "l3")
+CONF_THRESHOLD_PREFIX = "max_"
+CONF_CURRENT_PREFIX = "current_"
+CONF_CHARGER_NAME = "name"
+CONF_SETPOINT = "setpoint"
+CONF_CONTROL = "control_entity"
+CONF_START = "start_value"
+CONF_STOP = "stop_value"
+CONF_MIN = "min_current"
+CONF_MAX = "max_current"
