@@ -1,5 +1,14 @@
 """Automatic unit tests for load-balancing decisions (no HA installation required)."""
-from custom_components.ev_load_manager.planner import Charger, decide, excesses
+import importlib.util
+from pathlib import Path
+import sys
+
+PATH = Path(__file__).resolve().parents[1] / "custom_components" / "ev_load_manager" / "planner.py"
+spec = importlib.util.spec_from_file_location("ev_planner", PATH)
+planner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = planner
+spec.loader.exec_module(planner)
+Charger, decide, excesses = planner.Charger, planner.decide, planner.excesses
 
 
 def c(name, l1=0, l2=0, l3=0, amps=16, minimum=6,
