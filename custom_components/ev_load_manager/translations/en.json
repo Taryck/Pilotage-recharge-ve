@@ -10,7 +10,11 @@
           "current_l2": "Total current L2",
           "max_l2": "Maximum L2 (A)",
           "current_l3": "Total current L3",
-          "max_l3": "Maximum L3 (A)"
+          "max_l3": "Maximum L3 (A)",
+          "ack_timeout": "Acknowledgement timeout per attempt (seconds)",
+          "ack_retries": "Number of retries before shutdown",
+          "control_interval": "Control interval (seconds)",
+          "settle_delay": "Post-acknowledgement settling delay (seconds)"
         }
       }
     },
@@ -29,7 +33,11 @@
           "current_l2": "Total current L2",
           "max_l2": "Maximum L2 (A)",
           "current_l3": "Total current L3",
-          "max_l3": "Maximum L3 (A)"
+          "max_l3": "Maximum L3 (A)",
+          "ack_timeout": "Acknowledgement timeout per attempt (seconds)",
+          "ack_retries": "Number of retries before shutdown",
+          "control_interval": "Control interval (seconds)",
+          "settle_delay": "Post-acknowledgement settling delay (seconds)"
         }
       }
     }
@@ -74,7 +82,8 @@
         "missing_command_value": "Command values are required",
         "same_command_values": "Start and stop must differ",
         "invalid_select_option": "Value not in select options",
-        "invalid_boolean_values": "For switch or input_boolean, use on and off"
+        "invalid_boolean_values": "For switch or input_boolean, use on and off",
+        "unsupported_control_domain": "Unsupported charge-command entity domain."
       }
     }
   }
