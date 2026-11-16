@@ -15,6 +15,9 @@ from .const import (
     CONF_CHARGER_NAME, CONF_CONTROL, CONF_CURRENT_PREFIX, CONF_MAX,
     CONF_MIN, CONF_SETPOINT, CONF_START, CONF_STOP, CONF_THRESHOLD_PREFIX,
     DOMAIN, PHASES, SUBENTRY_TYPE_CHARGER,
+    CONF_ACK_TIMEOUT, CONF_ACK_RETRIES, CONF_CONTROL_INTERVAL, CONF_SETTLE_DELAY,
+    DEFAULT_ACK_TIMEOUT, DEFAULT_ACK_RETRIES, DEFAULT_CONTROL_INTERVAL,
+    DEFAULT_SETTLE_DELAY,
 )
 
 
@@ -23,7 +26,9 @@ def _current_selector():
 
 
 def _entity_selector():
-    return selector.EntitySelector(selector.EntitySelectorConfig())
+    return selector.EntitySelector(selector.EntitySelectorConfig(
+        domain=["select", "input_select", "switch", "input_boolean", "number", "input_number"]
+    ))
 
 
 def _setpoint_selector():
@@ -36,6 +41,29 @@ def _threshold_selector():
     return selector.NumberSelector(
         selector.NumberSelectorConfig(min=0.1, max=10000, step=0.1, mode="box", unit_of_measurement="A")
     )
+
+
+def _default_tuning() -> dict:
+    return {
+        CONF_ACK_TIMEOUT: DEFAULT_ACK_TIMEOUT,
+        CONF_ACK_RETRIES: DEFAULT_ACK_RETRIES,
+        CONF_CONTROL_INTERVAL: DEFAULT_CONTROL_INTERVAL,
+        CONF_SETTLE_DELAY: DEFAULT_SETTLE_DELAY,
+    }
+
+
+def _tuning_fields(defaults: dict[str, Any]) -> dict:
+    """Per-installation timing controls."""
+    return {
+        vol.Required(CONF_ACK_TIMEOUT, default=defaults.get(CONF_ACK_TIMEOUT, DEFAULT_ACK_TIMEOUT)):
+            vol.All(vol.Coerce(float), vol.Range(min=1.0, max=120.0)),
+        vol.Required(CONF_ACK_RETRIES, default=defaults.get(CONF_ACK_RETRIES, DEFAULT_ACK_RETRIES)):
+            vol.All(vol.Coerce(int), vol.Range(min=0, max=10)),
+        vol.Required(CONF_CONTROL_INTERVAL, default=defaults.get(CONF_CONTROL_INTERVAL, DEFAULT_CONTROL_INTERVAL)):
+            vol.All(vol.Coerce(float), vol.Range(min=0.2, max=30.0)),
+        vol.Required(CONF_SETTLE_DELAY, default=defaults.get(CONF_SETTLE_DELAY, DEFAULT_SETTLE_DELAY)):
+            vol.All(vol.Coerce(float), vol.Range(min=0.0, max=30.0)),
+    }
 
 
 def _charger_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
@@ -67,6 +95,8 @@ def _validate_charger(hass, data: dict[str, Any]) -> str | None:
     if data[CONF_START] == data[CONF_STOP]:
         return "same_command_values"
     entity_id = data[CONF_CONTROL]
+    if not entity_id.startswith(("select.", "input_select.", "switch.", "input_boolean.", "number.", "input_number.")):
+        return "unsupported_control_domain"
     state = hass.states.get(entity_id)
     if entity_id.startswith("select.") and state is not None:
         options = state.attributes.get("options", [])
@@ -92,6 +122,7 @@ class EvLoadManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         for phase in PHASES:
             schema[vol.Required(f"{CONF_CURRENT_PREFIX}{phase}")] = _current_selector()
             schema[vol.Required(f"{CONF_THRESHOLD_PREFIX}{phase}", default=30.0)] = _threshold_selector()
+        schema.update(_tuning_fields({}))
         return self.async_show_form(step_id="user", data_schema=vol.Schema(schema))
 
     async def async_step_import(self, user_input: dict[str, Any]) -> FlowResult:
@@ -118,6 +149,7 @@ class EvLoadManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Marker used to identify test configurations. Keep this in the entry
         # so that a later import can NEVER overwrite a real installation.
         config["simulator_entry_id"] = simulator_id
+        config.update(_default_tuning())
         name = str(user_input.get("simulator_name", "Simulated parking"))
         incoming = []
         seen = set()
@@ -199,6 +231,7 @@ class EvLoadManagerOptionsFlow(config_entries.OptionsFlow):
             schema[vol.Required(key, default=d.get(key, vol.UNDEFINED))] = _current_selector()
             key = f"{CONF_THRESHOLD_PREFIX}{phase}"
             schema[vol.Required(key, default=d.get(key, 30.0))] = _threshold_selector()
+        schema.update(_tuning_fields(d))
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))
 
 
