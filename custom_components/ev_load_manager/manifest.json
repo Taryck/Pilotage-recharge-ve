@@ -1,0 +1,12 @@
+{
+  "domain": "ev_load_manager",
+  "name": "Gestion de recharge VE",
+  "version": "0.1.0",
+  "documentation": "https://github.com/Taryck/Pilotage-recharge-ve",
+  "issue_tracker": "https://github.com/Taryck/Pilotage-recharge-ve/issues",
+  "codeowners": [],
+  "config_flow": true,
+  "iot_class": "local_push",
+  "integration_type": "hub",
+  "requirements": []
+}
