@@ -82,9 +82,33 @@ class EvLoadManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        await self.async_set_unique_id("installation")
-        self._abort_if_unique_id_configured()
         if user_input is not None:
+            # Internal, explicit simulator handoff. A distinct unique ID prevents
+            # duplicates without reserving the single old "installation" ID.
+            simulator_id = user_input.get("simulator_entry_id")
+            if simulator_id:
+                await self.async_set_unique_id(f"ev_simulator_{simulator_id}")
+                self._abort_if_unique_id_configured()
+                chargers = user_input["simulator_chargers"]
+                config = {
+                    key: value for key, value in user_input.items()
+                    if key not in ("simulator_chargers", "simulator_name")
+                }
+                return self.async_create_entry(
+                    title=f"Gestion recharge VE - Test {user_input.get('simulator_name', '')}",
+                    data=config,
+                    subentries=[
+                        {
+                            "subentry_type": SUBENTRY_TYPE_CHARGER,
+                            "title": charger["name"],
+                            "unique_id": charger["simulator_key"],
+                            "data": {key: value for key, value in charger.items()
+                                     if key != "simulator_key"},
+                        }
+                        for charger in chargers
+                    ],
+                )
+            # Manual installations are now allowed in multiples.
             return self.async_create_entry(title="Gestion de recharge VE", data=user_input)
         schema = {}
         for phase in PHASES:
