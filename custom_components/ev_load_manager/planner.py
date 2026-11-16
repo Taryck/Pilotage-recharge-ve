@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
-from .const import PHASES
+PHASES = ("l1", "l2", "l3")
 
 EPS = 0.00001
 
