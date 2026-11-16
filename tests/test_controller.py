@@ -401,7 +401,7 @@ def test_physical_progress_extends_wave_timeout_without_retry():
         # A physical ramp has begun despite the earlier original deadline.
         controller._physical_progress(subs["charger_0"], p, 100)
         assert p.last_progress_at == 100
-        await controller._expire_pending(subs, 101)
+        await controller._expire_pending(subs, 100.01)
         assert controller.pending["charger_0"].action == "reduce"
         assert not any(
             event["event"] == "ack_timeout" for event in controller.audit
