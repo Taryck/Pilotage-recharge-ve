@@ -13,6 +13,10 @@
           "max_l3": "Maximum L3 (A)"
         }
       }
+    },
+    "abort": {
+      "invalid_import": "Invalid or incomplete simulator import.",
+      "already_configured": "Simulated installation updated."
     }
   },
   "options": {
