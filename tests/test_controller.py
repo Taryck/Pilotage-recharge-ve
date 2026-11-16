@@ -314,3 +314,24 @@ def test_restart_waits_until_physical_stop_reaches_zero():
         await controller._run_once()
         assert "charger_0" not in controller.pending
     asyncio.run(run())
+
+
+def test_restart_grace_is_installed_before_command_acknowledgement():
+    async def run():
+        controller, hass, subs, store, tasks, _ = setup(1)
+        controller.runtime.snapshots["charger_0"] = {
+            "initial_current_a": 16, "initial_command": "Charging",
+            "stopped_by_module": True,
+        }
+        hass.states.set("sensor.charger_0_l1", 0)
+        hass.states.set("select.charger_0", "Charging")
+        now = asyncio.get_running_loop().time()
+        await controller._issue(subs["charger_0"], "start", "Charging", now)
+        assert controller.startup_grace_until["charger_0"] >= now + 3
+        _, _, chargers = controller._state()
+        await controller._prune_snapshots(chargers)
+        assert "charger_0" in controller.runtime.snapshots
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    asyncio.run(run())
