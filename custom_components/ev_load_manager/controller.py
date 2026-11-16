@@ -63,6 +63,7 @@ class LoadController:
         self.startup_grace_until: dict[str, float] = {}
         self._dirty = False
         self._task: asyncio.Task | None = None
+        self._command_tasks: set[asyncio.Task] = set()
         self._stopping = False
         self._last_error: str | None = None
         self._last_notification: str | None = None
@@ -105,6 +106,11 @@ class LoadController:
         self.remove_callbacks.clear()
         if self._task is not None:
             await self._task
+        for task in tuple(self._command_tasks):
+            task.cancel()
+        if self._command_tasks:
+            await asyncio.gather(*self._command_tasks, return_exceptions=True)
+        self.pending.clear()
         async with self.lock:
             pass
 
@@ -249,12 +255,17 @@ class LoadController:
             pending.sending = False
             self._request_evaluation()
 
+    def _schedule_command(self, sub, pending):
+        task = self.hass.async_create_task(self._send_background(sub, pending))
+        self._command_tasks.add(task)
+        task.add_done_callback(self._command_tasks.discard)
+
     async def _issue(self, sub, action: str, target: float | str, now: float):
         if sub.subentry_id in self.pending:
             return False
         pending = Pending(action=action, target=target, sent_at=now, attempts=1, sending=True)
         self.pending[sub.subentry_id] = pending
-        self.hass.async_create_task(self._send_background(sub, pending))
+        self._schedule_command(sub, pending)
         return True
 
     async def _expire_pending(self, subs: dict, now: float):
@@ -296,7 +307,7 @@ class LoadController:
                 pending.attempts += 1
                 pending.sent_at = now
                 pending.sending = True
-                self.hass.async_create_task(self._send_background(sub, pending))
+                self._schedule_command(sub, pending)
                 continue
             self.pending.pop(sid, None)
             if pending.action in ("reduce", "restore", "start", "prepare_restart"):
@@ -317,17 +328,22 @@ class LoadController:
         for charger in chargers:
             sid = charger.identifier
             snap = self.runtime.snapshots.get(sid)
-            if snap is None or sid in self.pending:
+            if snap is None:
                 continue
-            # A still-active charger drawing no current has completed its
-            # charging session: there is no original charge left to restore.
+            # At actual zero current, discard the obsolete original charge
+            # even if a setpoint acknowledgement is still outstanding.
             no_draw = all(value is not None and abs(value) <= EPS
                           for value in charger.currents.values())
             if (charger.active and no_draw
                     and asyncio.get_running_loop().time() >=
-                    self.startup_grace_until.get(sid, 0)) or (
-                not charger.active and not snap.get("stopped_by_module")
-            ):
+                    self.startup_grace_until.get(sid, 0)):
+                self.pending.pop(sid, None)
+                self.runtime.snapshots.pop(sid, None)
+                changed = True
+                continue
+            if sid in self.pending:
+                continue
+            if not charger.active and not snap.get("stopped_by_module"):
                 self.runtime.snapshots.pop(sid, None)
                 changed = True
             elif (charger.active and charger.setpoint is not None
