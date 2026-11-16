@@ -176,6 +176,14 @@ class InstallationStatus(SensorEntity):
         self.async_on_remove(async_track_state_change_event(
             self.hass, list(filter(None, ids)), self._changed
         ))
+        self.async_on_remove(self.hass.bus.async_listen(
+            "ev_load_manager_audit", self._audit_changed
+        ))
+
+    @callback
+    def _audit_changed(self, event):
+        if event.data.get("entry_id") == self.entry.entry_id:
+            self.async_write_ha_state()
 
     @callback
     def _changed(self, event):
