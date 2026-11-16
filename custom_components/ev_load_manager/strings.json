@@ -12,7 +12,6 @@
           "current_l3": "Total current L3",
           "max_l3": "Maximum L3 (A)",
           "ack_timeout": "Acknowledgement timeout per attempt (seconds)",
-          "ack_retries": "Number of retries before shutdown",
           "control_interval": "Control interval (seconds)",
           "settle_delay": "Post-acknowledgement settling delay (seconds)"
         }
@@ -35,7 +34,6 @@
           "current_l3": "Total current L3",
           "max_l3": "Maximum L3 (A)",
           "ack_timeout": "Acknowledgement timeout per attempt (seconds)",
-          "ack_retries": "Number of retries before shutdown",
           "control_interval": "Control interval (seconds)",
           "settle_delay": "Post-acknowledgement settling delay (seconds)"
         }
