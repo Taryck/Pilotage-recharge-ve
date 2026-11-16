@@ -37,6 +37,7 @@ class Pending:
     sent_at: float
     attempts: int = 0
     sending: bool = False
+    source_setpoint: float | None = None
 
 
 def _number(hass: HomeAssistant, entity_id: str | None) -> float | None:
@@ -291,7 +292,9 @@ class LoadController:
     async def _issue(self, sub, action: str, target: float | str, now: float):
         if sub.subentry_id in self.pending:
             return False
-        pending = Pending(action=action, target=target, sent_at=now, attempts=1, sending=True)
+        source = _number(self.hass, sub.data[CONF_SETPOINT]) if action == "reduce" else None
+        pending = Pending(action=action, target=target, sent_at=now, attempts=1,
+                          sending=True, source_setpoint=source)
         self.pending[sub.subentry_id] = pending
         self._record("command", charger=sub.title, action=action, target=target)
         if action == "start":
@@ -425,7 +428,8 @@ class LoadController:
             for c in chargers:
                 pending = self.pending.get(c.identifier)
                 if pending is not None and pending.action == "reduce" and c.setpoint is not None:
-                    reserved[c.identifier] = max(0.0, c.setpoint - float(pending.target))
+                    baseline = pending.source_setpoint if pending.source_setpoint is not None else c.setpoint
+                    reserved[c.identifier] = max(0.0, baseline - float(pending.target))
 
             blocked = frozenset(
                 {c.identifier for c in chargers if
