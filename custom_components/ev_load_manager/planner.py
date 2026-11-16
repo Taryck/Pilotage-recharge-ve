@@ -98,18 +98,15 @@ def decide(totals: Mapping[str, float | None],
         return Decision("idle", reason="No charger drawing on exceeded phases")
 
     # Recovery must not compete with load shedding on another phase.
-    if any(float(limits[p]) - float(totals[p]) + EPS < recovery_margin
-           for p in PHASES):
-        return Decision("idle", reason="Insufficient recovery headroom")
-
+    # Spare current matters on the phases actually used by each charger.
+    # Another phase may have less than 2 A free without blocking recovery.
     eligible = [c for c in chargers if c.active and c.original is not None
                 and c.setpoint is not None
                 and c.setpoint + EPS < min(c.original, c.maximum)
                 and all(v is not None for v in c.currents.values())]
-    # A +1 A change is conservatively assumed to load every configured
-    # supply phase by 1 A; retain >=1 A margin on all three phases.
-    eligible = [c for c in eligible if all(
-        float(limits[p]) - float(totals[p]) >= 2 - EPS for p in PHASES)]
+    eligible = [c for c in eligible if c.phases() and all(
+        float(limits[p]) - float(totals[p]) >= recovery_margin - EPS
+        for p in c.phases())]
     eligible.sort(key=lambda c: (
         sum(c.currents[p] or 0 for p in PHASES),
         -(c.original - c.setpoint), c.identifier,
