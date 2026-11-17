@@ -29,7 +29,30 @@ def import_function():
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     klass = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "EvLoadManagerConfigFlow")
     method = next(x for x in klass.body if isinstance(x, ast.AsyncFunctionDef) and x.name == "async_step_import")
-    module = ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[]))
+    # Extract the real default-settings helper as well as the import step.
+    # A previous isolated AST test omitted this dependency, causing four
+    # false failures in CI (NameError: _default_tuning).
+    default_helper = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_default_tuning"
+    )
+    module = ast.fix_missing_locations(
+        ast.Module(body=[default_helper, method], type_ignores=[])
+    )
+    # Read the actual tuning constants so their values do not drift from
+    # production when configuration defaults change.
+    const_tree = ast.parse(
+        (path.parent / "const.py").read_text(encoding="utf-8")
+    )
+    tuning_constants = {
+        node.targets[0].id: ast.literal_eval(node.value)
+        for node in const_tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id.startswith(("CONF_", "DEFAULT_"))
+        and isinstance(node.value, ast.Constant)
+    }
     globals_ = {
         "Any": Any,
         "FlowResult": dict,
@@ -43,6 +66,7 @@ def import_function():
         "MappingProxyType": MappingProxyType,
         "_validate_charger": lambda hass, data: None,
     }
+    globals_.update(tuning_constants)
     exec(compile(module, str(path), "exec"), globals_)
     return globals_["async_step_import"]
 
@@ -103,6 +127,9 @@ def test_first_sync_creates_dedicated_entry_and_all_chargers():
     assert result["type"] == "create_entry"
     assert result["data"]["simulator_entry_id"] == "parking-123"
     assert "simulator_chargers" not in result["data"]
+    assert result["data"]["ack_timeout"] == 6.0
+    assert result["data"]["control_interval"] == 1.0
+    assert result["data"]["settle_delay"] == 1.0
     assert len(result["subentries"]) == 10
     assert len({x["unique_id"] for x in result["subentries"]}) == 10
     assert not flow.updates
